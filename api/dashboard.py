@@ -1,10 +1,17 @@
 from flask import Blueprint, request, jsonify, g
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, Cinema, Hall, Camera, Alarm, AlarmType, AlarmLevel, User
 from datetime import datetime, timedelta
 from sqlalchemy import func
 
 dashboard_bp = Blueprint('dashboard', __name__)
+
+
+def get_current_user_info():
+    """获取当前用户信息"""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    return user_id, claims
 
 
 @dashboard_bp.route('/overview', methods=['GET'])
@@ -126,17 +133,17 @@ def get_cinema_dashboard(cinema_id):
 @jwt_required()
 def get_recent_alarms():
     """获取最近报警"""
-    identity = get_jwt_identity()
-    
+    _, claims = get_current_user_info()
+
     limit = request.args.get('limit', 10, type=int)
-    
+
     query = Alarm.query.order_by(Alarm.occurred_at.desc()).limit(limit)
-    
-    if identity['role'] == 'manager' and identity.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == identity['cinema_id'])
-    
+
+    if claims.get('role') == 'manager' and claims.get('cinema_id'):
+        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
+
     alarms = query.all()
-    
+
     return jsonify({
         'success': True,
         'alarms': [a.to_dict() for a in alarms]
@@ -147,12 +154,12 @@ def get_recent_alarms():
 @jwt_required()
 def get_cameras_status():
     """获取所有摄像头状态"""
-    identity = get_jwt_identity()
-    
+    _, claims = get_current_user_info()
+
     query = Camera.query
-    
-    if identity['role'] == 'manager' and identity.get('cinema_id'):
-        query = query.filter(Camera.cinema_id == identity['cinema_id'])
+
+    if claims.get('role') == 'manager' and claims.get('cinema_id'):
+        query = query.filter(Camera.cinema_id == claims.get('cinema_id'))
     
     cameras = query.all()
     

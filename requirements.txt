@@ -12,3 +12,6 @@ numpy>=1.24.0
 eventlet>=0.33.0
 gevent>=3.5.0
 PyMySQL>=1.1.0
+ultralytics>=8.0.0
+torch>=2.0.0
+torchvision>=0.15.0

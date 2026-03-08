@@ -19,6 +19,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/Dashboard.vue')
       },
       {
+        path: '',
+        name: 'Dashboard',
+        component: () => import('../views/Dashboard.vue')
+      },
+      {
         path: 'monitor',
         name: 'Monitor',
         component: () => import('../views/Monitor.vue')
@@ -49,6 +54,11 @@ const routes: RouteRecordRaw[] = [
         path: 'settings',
         name: 'Settings',
         component: () => import('../views/Settings.vue')
+      },
+      {
+        path: 'detection',
+        name: 'Detection',
+        component: () => import('../views/Detection.vue')
       }
     ]
   }

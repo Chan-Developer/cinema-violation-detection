@@ -1,42 +1,49 @@
 from flask import Blueprint, request, jsonify, g
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, Camera, Cinema, Hall, CameraStatus
 
 camera_bp = Blueprint('camera', __name__)
+
+
+def get_current_user_info():
+    """获取当前用户信息"""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    return user_id, claims
 
 
 @camera_bp.route('', methods=['GET'])
 @jwt_required()
 def get_cameras():
     """获取摄像头列表"""
-    identity = get_jwt_identity()
-    
+    _, claims = get_current_user_info()
+
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     cinema_id = request.args.get('cinema_id', type=int)
     hall_id = request.args.get('hall_id', type=int)
     status = request.args.get('status', type=int)
     keyword = request.args.get('keyword')
-    
+
     query = Camera.query
-    
+
     # 根据角色过滤
-    if identity['role'] == 'manager' and identity.get('cinema_id'):
-        query = query.filter(Camera.cinema_id == identity['cinema_id'])
+    if claims.get('role') == 'manager' and claims.get('cinema_id'):
+        query = query.filter(Camera.cinema_id == claims.get('cinema_id'))
     elif cinema_id:
         query = query.filter(Camera.cinema_id == cinema_id)
-    
+
     if hall_id:
         query = query.filter(Camera.hall_id == hall_id)
     if status is not None:
         query = query.filter(Camera.status == status)
     if keyword:
         query = query.filter(Camera.name.contains(keyword))
-    
+
     pagination = query.order_by(Camera.created_at.desc()).paginate(
         page=page, per_page=per_page, error_out=False
     )
-    
+
     return jsonify({
         'success': True,
         'cameras': [c.to_dict(include_status=True) for c in pagination.items],
@@ -61,17 +68,17 @@ def get_camera(camera_id):
 @jwt_required()
 def create_camera():
     """创建摄像头"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager', 'maintenance']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager', 'maintenance']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     data = request.get_json()
     name = data.get('name')
     cinema_id = data.get('cinema_id')
-    
+
     if not name or not cinema_id:
         return jsonify({'success': False, 'message': '缺少必要参数'}), 400
-    
+
     # 验证影院存在
     cinema = Cinema.query.get(cinema_id)
     if not cinema:

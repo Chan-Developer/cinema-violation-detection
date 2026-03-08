@@ -1,17 +1,24 @@
 from flask import Blueprint, request, jsonify, g
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, Alarm, AlarmType, AlarmLevel, Camera, AlarmNotification
 from datetime import datetime, timedelta
 
 alarm_bp = Blueprint('alarm', __name__)
 
 
+def get_current_user_info():
+    """获取当前用户信息"""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    return user_id, claims
+
+
 @alarm_bp.route('', methods=['GET'])
 @jwt_required()
 def get_alarms():
     """获取报警列表"""
-    identity = get_jwt_identity()
-    
+    _, claims = get_current_user_info()
+
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     camera_id = request.args.get('camera_id', type=int)
@@ -19,17 +26,17 @@ def get_alarms():
     level = request.args.get('level')
     status = request.args.get('status', type=int)
     cinema_id = request.args.get('cinema_id', type=int)
-    
+
     # 时间范围
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
-    
+
     query = Alarm.query
-    
+
     # 根据角色过滤
-    if identity['role'] == 'manager' and identity.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == identity['cinema_id'])
-    elif identity['role'] == 'operator':
+    if claims.get('role') == 'manager' and claims.get('cinema_id'):
+        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
+    elif claims.get('role') == 'operator':
         # 监控员可以看到所有报警
         pass
     elif cinema_id:
@@ -76,21 +83,21 @@ def get_alarm(alarm_id):
 @jwt_required()
 def confirm_alarm(alarm_id):
     """确认报警"""
-    identity = get_jwt_identity()
-    
+    user_id, _ = get_current_user_info()
+
     alarm = Alarm.query.get(alarm_id)
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
-    
+
     if alarm.status != 0:
         return jsonify({'success': False, 'message': '报警已被处理'}), 400
-    
+
     alarm.status = 1  # 已确认
-    alarm.handler_id = identity['id']
+    alarm.handler_id = user_id
     alarm.confirmed_at = datetime.now()
-    
+
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '报警已确认', 'alarm': alarm.to_dict()})
 
 
@@ -98,21 +105,21 @@ def confirm_alarm(alarm_id):
 @jwt_required()
 def resolve_alarm(alarm_id):
     """处理报警"""
-    identity = get_jwt_identity()
-    
+    user_id, _ = get_current_user_info()
+
     alarm = Alarm.query.get(alarm_id)
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
-    
+
     data = request.get_json()
-    
+
     alarm.status = 2  # 已处理
-    alarm.handler_id = identity['id']
+    alarm.handler_id = user_id
     alarm.handler_note = data.get('note', '')
     alarm.resolved_at = datetime.now()
-    
+
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '报警已处理', 'alarm': alarm.to_dict()})
 
 
@@ -120,21 +127,21 @@ def resolve_alarm(alarm_id):
 @jwt_required()
 def ignore_alarm(alarm_id):
     """忽略报警"""
-    identity = get_jwt_identity()
-    
+    user_id, _ = get_current_user_info()
+
     alarm = Alarm.query.get(alarm_id)
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
-    
+
     data = request.get_json()
-    
+
     alarm.status = 3  # 已忽略
-    alarm.handler_id = identity['id']
+    alarm.handler_id = user_id
     alarm.handler_note = data.get('note', '忽略')
     alarm.resolved_at = datetime.now()
-    
+
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '报警已忽略', 'alarm': alarm.to_dict()})
 
 
@@ -142,20 +149,20 @@ def ignore_alarm(alarm_id):
 @jwt_required()
 def get_alarm_statistics():
     """获取报警统计"""
-    identity = get_jwt_identity()
-    
+    _, claims = get_current_user_info()
+
     # 时间范围
     days = request.args.get('days', 7, type=int)
     start_date = datetime.now() - timedelta(days=days)
-    
+
     query = Alarm.query.filter(Alarm.occurred_at >= start_date)
-    
+
     # 根据角色过滤
-    if identity['role'] == 'manager' and identity.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == identity['cinema_id'])
-    elif identity['role'] == 'operator':
+    if claims.get('role') == 'manager' and claims.get('cinema_id'):
+        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
+    elif claims.get('role') == 'operator':
         pass
-    elif identity['role'] not in ['admin']:
+    elif claims.get('role') not in ['admin']:
         cinema_id = request.args.get('cinema_id', type=int)
         if cinema_id:
             query = query.join(Camera).filter(Camera.cinema_id == cinema_id)

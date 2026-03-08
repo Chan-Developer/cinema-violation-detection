@@ -1,39 +1,46 @@
 from flask import Blueprint, request, jsonify, g
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, Cinema, Hall, Seat
 
 cinema_bp = Blueprint('cinema', __name__)
+
+
+def get_current_user_info():
+    """获取当前用户信息"""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    return user_id, claims
 
 
 @cinema_bp.route('', methods=['GET'])
 @jwt_required()
 def get_cinemas():
     """获取影院列表"""
-    identity = get_jwt_identity()
-    
+    user_id, claims = get_current_user_info()
+
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     keyword = request.args.get('keyword')
     city = request.args.get('city')
     status = request.args.get('status', type=int)
-    
+
     query = Cinema.query
-    
+
     # 影院经理只能看到自己管理的影院
-    if identity['role'] == 'manager' and identity.get('cinema_id'):
-        query = query.filter(Cinema.id == identity['cinema_id'])
-    
+    if claims.get('role') == 'manager' and claims.get('cinema_id'):
+        query = query.filter(Cinema.id == claims.get('cinema_id'))
+
     if keyword:
         query = query.filter(Cinema.name.contains(keyword))
     if city:
         query = query.filter(Cinema.city == city)
     if status is not None:
         query = query.filter(Cinema.status == status)
-    
+
     pagination = query.order_by(Cinema.created_at.desc()).paginate(
         page=page, per_page=per_page, error_out=False
     )
-    
+
     return jsonify({
         'success': True,
         'cinemas': [c.to_dict() for c in pagination.items],
@@ -58,16 +65,16 @@ def get_cinema(cinema_id):
 @jwt_required()
 def create_cinema():
     """创建影院"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     data = request.get_json()
     name = data.get('name')
-    
+
     if not name:
         return jsonify({'success': False, 'message': '影院名称不能为空'}), 400
-    
+
     cinema = Cinema(
         name=name,
         address=data.get('address'),
@@ -77,10 +84,10 @@ def create_cinema():
         contact=data.get('contact'),
         status=1
     )
-    
+
     db.session.add(cinema)
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '影院创建成功', 'cinema': cinema.to_dict()})
 
 
@@ -88,14 +95,14 @@ def create_cinema():
 @jwt_required()
 def update_cinema(cinema_id):
     """更新影院"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     cinema = Cinema.query.get(cinema_id)
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
-    
+
     data = request.get_json()
     
     if 'name' in data:
@@ -122,17 +129,17 @@ def update_cinema(cinema_id):
 @jwt_required()
 def delete_cinema(cinema_id):
     """删除影院"""
-    identity = get_jwt_identity()
-    if identity['role'] != 'admin':
+    _, claims = get_current_user_info()
+    if claims.get('role') != 'admin':
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     cinema = Cinema.query.get(cinema_id)
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
-    
+
     db.session.delete(cinema)
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '影院删除成功'})
 
 
@@ -150,10 +157,10 @@ def get_halls(cinema_id):
 @jwt_required()
 def create_hall(cinema_id):
     """创建影厅"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     cinema = Cinema.query.get(cinema_id)
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
@@ -199,10 +206,10 @@ def create_hall(cinema_id):
 @jwt_required()
 def update_hall(hall_id):
     """更新影厅"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     hall = Hall.query.get(hall_id)
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404
@@ -230,10 +237,10 @@ def update_hall(hall_id):
 @jwt_required()
 def delete_hall(hall_id):
     """删除影厅"""
-    identity = get_jwt_identity()
-    if identity['role'] != 'admin':
+    _, claims = get_current_user_info()
+    if claims.get('role') != 'admin':
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     hall = Hall.query.get(hall_id)
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404
@@ -258,10 +265,10 @@ def get_seats(hall_id):
 @jwt_required()
 def create_seats(hall_id):
     """批量创建座位"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     hall = Hall.query.get(hall_id)
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404

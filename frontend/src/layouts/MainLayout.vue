@@ -119,6 +119,7 @@ const pendingCount = computed(() => authStore.pendingAlarmCount)
 const menuItems = [
   { path: '/', label: '仪表盘', icon: 'DataAnalysis', roles: null },
   { path: '/monitor', label: '实时监控', icon: 'Monitor', roles: null },
+  { path: '/detection', label: '图片检测', icon: 'ImageAdd', roles: null },
   { path: '/alarms', label: '报警管理', icon: 'Bell', roles: null, badge: () => authStore.pendingAlarmCount },
   { path: '/cinemas', label: '影院管理', icon: 'OfficeBuilding', roles: ['admin', 'manager'] },
   { path: '/cameras', label: '设备管理', icon: 'VideoCamera', roles: null },

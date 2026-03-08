@@ -1,133 +1,130 @@
-# YOLO检测 + LLM识别
+# 🎬 影院不文明行为检测系统
 
-一个基于Flask的Web应用，结合YOLOv8目标检测和大语言模型进行图像理解和描述。
+## 🚀 快速启动
 
-## 功能特点
-
-- 🔍 YOLOv8 目标检测
-- 🤖 大模型图像描述（支持OpenAI、智谱AI、通义千问）
-- 📱 简洁的Web界面
-- 🖼️ 图片上传和实时检测
-
-## 环境要求
-
-- Python 3.8+
-- Node.js (可选，用于前端开发)
-
-## 安装
-
-1. 克隆项目并进入目录：
+### 1. 启动数据库
 ```bash
-cd ~/project
+docker-compose up -d
 ```
 
-2. 创建虚拟环境（推荐）：
+### 2. 启动后端
 ```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate  # Windows
+python3 app.py
 ```
 
-3. 安装依赖：
-```bash
-pip install -r requirements.txt
-```
+### 3. 访问应用
+- 地址: http://localhost:9500
+- 账号: admin
+- 密码: admin123
 
-4. 配置环境变量：
-```bash
-cp .env.example .env
-# 编辑 .env 文件，填入你的API Key
-```
+## ✨ 已修复问题
 
-## 配置
+**问题**: 添加用户、影院、上传图片都失败
+**原因**: JWT Token处理逻辑不正确
+**方案**: 修改JWT identity为字符串，使用additional_claims传递额外信息
+**修改文件**:
+- `api/auth.py` - 修复JWT生成和权限检查
+- `api/cinema.py` - 修复权限检查逻辑
 
-编辑 `.env` 文件：
+## ✅ 功能状态
 
-```env
-# 选择LLM提供商: openai, zhipu, qwen
-LLM_PROVIDER=openai
+| 功能 | 状态 | API |
+|------|------|-----|
+| 用户管理 | ✅ | POST /api/auth/users |
+| 影院管理 | ✅ | POST /api/cinemas |
+| 图片检测 | ✅ | POST /api/detect |
 
-# OpenAI配置
-OPENAI_API_KEY=your_openai_api_key
-
-# 或智谱AI配置
-ZHIPU_API_KEY=your_zhipu_api_key
-
-# 或通义千问配置
-DASHSCOPE_API_KEY=your_dashscope_api_key
-```
-
-## 运行
+## 🧪 测试命令
 
 ```bash
-python app.py
+# 登录
+TOKEN=$(curl -s -X POST http://localhost:9500/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}' | jq -r '.access_token')
+
+# 添加用户
+curl -X POST http://localhost:9500/api/auth/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"test","password":"pass","real_name":"测试","role_id":3}'
+
+# 添加影院
+curl -X POST http://localhost:9500/api/cinemas \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"影院名称","address":"地址","city":"城市"}'
+
+# 上传图片检测
+curl -X POST http://localhost:9500/api/detect \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@image.jpg"
 ```
 
-服务将在 http://localhost:5000 启动。
+## 📋 代码修改详解
 
-## 使用
+### auth.py 修改
 
-1. 打开浏览器访问 http://localhost:5000
-2. 点击上传区域选择图片或拖拽图片
-3. 点击"开始检测"按钮
-4. 查看检测结果和LLM描述
-
-## 项目结构
-
-```
-project/
-├── app.py              # Flask主应用
-├── requirements.txt    # Python依赖
-├── .env.example       # 环境变量示例
-├── README.md          # 说明文档
-├── uploads/           # 上传的图片目录
-├── templates/
-│   └── index.html     # 前端页面
-├── static/            # 静态文件
-└── utils/
-    ├── __init__.py
-    └── llm.py         # LLM API调用
+1. **修改import** - 添加get_jwt
+```python
+from flask_jwt_extended import get_jwt, get_jwt_identity
 ```
 
-## API
-
-### POST /detect
-
-上传图片进行检测
-
-**请求：**
-- Content-Type: multipart/form-data
-- Body: image (图片文件)
-
-**响应：**
-```json
-{
-  "success": true,
-  "detections": [
-    {"class": "person", "confidence": 0.95, "bbox": [x1, y1, x2, y2]},
-    {"class": "dog", "confidence": 0.87, "bbox": [x1, y1, x2, y2]}
-  ],
-  "annotated_image": "base64编码的检测结果图",
-  "llm_description": "LLM生成的图片描述"
+2. **修改login函数** - JWT Token包含额外信息
+```python
+additional_claims = {
+    'role': user.role.name,
+    'role_id': user.role_id,
+    'cinema_id': user.cinema_id
 }
+create_access_token(identity=str(user.id), additional_claims=additional_claims)
 ```
 
-## 依赖
+3. **添加帮助函数** - 统一获取用户信息
+```python
+def get_current_user_with_claims():
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    return user_id, claims
+```
 
-- flask - Web框架
-- ultralytics - YOLOv8
-- openai - OpenAI API
-- python-dotenv - 环境变量
-- pillow - 图片处理
-- requests - HTTP请求
+4. **修改所有路由** - 使用new helper函数
+- 所有权限检查改为: `_, claims = get_current_user_with_claims()`
+- 改为: `if claims.get('role') != 'admin':`
 
-## 注意事项
+### cinema.py 修改
 
-1. 首次运行时会自动下载YOLO模型
-2. 确保API Key已正确配置
-3. 大模型API会产生费用，请留意使用
+1. **修改import** - 添加get_jwt
+2. **添加helper函数** - 同auth.py
+3. **修改所有路由** - 统一处理JWT
 
-## License
+## 🎯 核心改动
 
-MIT
+| 文件 | 改动 | 影响 |
+|------|------|------|
+| auth.py | JWT额外信息 | 修复所有auth相关API |
+| cinema.py | 权限检查 | 影院CRUD正常 |
+| detect.py | 无需修改 | 检测API正常 |
+
+## ✅ 测试验证
+
+所有操作已通过测试：
+- ✅ 创建用户（数据写入MySQL）
+- ✅ 创建影院（数据写入MySQL）
+- ✅ 上传图片检测（YOLO + LLM）
+- ✅ 更新用户/影院
+- ✅ 删除用户/影院
+
+## 📞 问题排查
+
+**JWT认证失败**
+- 确保使用最新的Token
+- 检查 Authorization header 格式: `Bearer <token>`
+- 重启Flask应用使代码生效
+
+**数据库操作失败**
+- 检查MySQL是否运行: `docker-compose ps`
+- 检查.env配置
+
+**检测失败**
+- 检查文件格式 (JPG/PNG/GIF/MP4)
+- 检查文件大小 (< 200MB)

@@ -8,10 +8,12 @@ def register_blueprints(app):
     from .alarm import alarm_bp
     from .stream import stream_bp
     from .dashboard import dashboard_bp
-    
+    from .detect import detect_bp
+
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(cinema_bp, url_prefix='/api/cinemas')
     app.register_blueprint(camera_bp, url_prefix='/api/cameras')
     app.register_blueprint(alarm_bp, url_prefix='/api/alarms')
     app.register_blueprint(stream_bp, url_prefix='/api/streams')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
+    app.register_blueprint(detect_bp, url_prefix='/api')

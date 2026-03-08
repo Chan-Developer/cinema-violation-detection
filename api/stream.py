@@ -1,19 +1,26 @@
 from flask import Blueprint, request, jsonify, g
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, Camera, VideoStream
 from services.video_stream import stream_manager
 
 stream_bp = Blueprint('stream', __name__)
 
 
+def get_current_user_info():
+    """获取当前用户信息"""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    return user_id, claims
+
+
 @stream_bp.route('/<int:camera_id>/start', methods=['POST'])
 @jwt_required()
 def start_stream(camera_id):
     """启动视频流"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager', 'operator', 'maintenance']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager', 'operator', 'maintenance']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     result = stream_manager.start_stream(camera_id)
     return jsonify(result)
 
@@ -22,10 +29,10 @@ def start_stream(camera_id):
 @jwt_required()
 def stop_stream(camera_id):
     """停止视频流"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager', 'operator', 'maintenance']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager', 'operator', 'maintenance']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     result = stream_manager.stop_stream(camera_id)
     return jsonify(result)
 
