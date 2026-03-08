@@ -102,14 +102,22 @@ def detect_image():
         worker = DetectionWorker(camera_id=0, detection_types='person,car,dog,cat,phone')
         detections = worker._detect(frame)
 
-        # 绘制检测框
+        # 绘制检测框并格式化为前端需要的格式
         annotated_frame = frame.copy()
+        formatted_detections = []
         for detection in detections:
             x1, y1, x2, y2 = detection['box']
             cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             label = f"{detection['type']}: {detection['confidence']:.2f}"
             cv2.putText(annotated_frame, label, (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # 格式化为前端期望的格式
+            formatted_detections.append({
+                'class': detection['type'],  # 前端期望 'class' 字段
+                'confidence': detection['confidence'],
+                'box': detection['box']
+            })
 
         # 编码为base64
         _, buffer = cv2.imencode('.jpg', annotated_frame)
@@ -136,7 +144,7 @@ def detect_image():
 
         return jsonify({
             'success': True,
-            'detections': detections,
+            'detections': formatted_detections,
             'annotated_image': f'data:image/jpeg;base64,{img_base64}',
             'llm_description': llm_description or '暂无描述'
         })

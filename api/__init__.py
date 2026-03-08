@@ -9,6 +9,7 @@ def register_blueprints(app):
     from .stream import stream_bp
     from .dashboard import dashboard_bp
     from .detect import detect_bp
+    from .role import role_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(cinema_bp, url_prefix='/api/cinemas')
@@ -17,3 +18,4 @@ def register_blueprints(app):
     app.register_blueprint(stream_bp, url_prefix='/api/streams')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(detect_bp, url_prefix='/api')
+    app.register_blueprint(role_bp, url_prefix='/api/roles')
