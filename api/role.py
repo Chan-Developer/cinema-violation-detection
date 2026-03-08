@@ -93,10 +93,12 @@ def update_role(role_id):
     data = request.get_json()
 
     if 'name' in data:
-        # 检查名称是否被占用
-        existing = Role.query.filter(Role.name == data['name'], Role.id != role_id).first()
-        if existing:
-            return jsonify({'success': False, 'message': '角色名称已存在'}), 400
+        # 检查名称是否被修改
+        if data['name'] != role.name:
+            # 检查新名称是否被占用
+            existing = Role.query.filter_by(name=data['name']).first()
+            if existing:
+                return jsonify({'success': False, 'message': '角色名称已存在'}), 400
         role.name = data['name']
 
     if 'description' in data:

@@ -137,6 +137,17 @@ def delete_cinema(cinema_id):
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
 
+    # 检查是否有影厅关联
+    hall_count = Hall.query.filter_by(cinema_id=cinema_id).count()
+    if hall_count > 0:
+        return jsonify({'success': False, 'message': f'该影院下有{hall_count}个影厅，无法删除'}), 400
+
+    # 检查是否有摄像头关联
+    from models import Camera
+    camera_count = Camera.query.filter_by(cinema_id=cinema_id).count()
+    if camera_count > 0:
+        return jsonify({'success': False, 'message': f'该影院下有{camera_count}个摄像头，无法删除'}), 400
+
     db.session.delete(cinema)
     db.session.commit()
 
@@ -164,30 +175,40 @@ def create_hall(cinema_id):
     cinema = Cinema.query.get(cinema_id)
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
-    
+
     data = request.get_json()
     name = data.get('name')
-    
+
     if not name:
         return jsonify({'success': False, 'message': '影厅名称不能为空'}), 400
-    
+
+    # 验证行数和列数
+    rows = data.get('rows', 10)
+    cols = data.get('cols', 15)
+
+    if not isinstance(rows, int) or rows < 1 or rows > 26:
+        return jsonify({'success': False, 'message': '影厅行数必须在1-26之间'}), 400
+
+    if not isinstance(cols, int) or cols < 1 or cols > 100:
+        return jsonify({'success': False, 'message': '影厅列数必须在1-100之间'}), 400
+
     hall = Hall(
         cinema_id=cinema_id,
         name=name,
         hall_type=data.get('hall_type'),
-        rows=data.get('rows', 10),
-        cols=data.get('cols', 15),
-        total_seats=data.get('rows', 10) * data.get('cols', 15),
+        rows=rows,
+        cols=cols,
+        total_seats=rows * cols,
         status=1
     )
-    
+
     db.session.add(hall)
     db.session.commit()
-    
+
     # 自动生成座位
-    rows = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    rows_letter = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     for r in range(hall.rows):
-        row_name = rows[r]
+        row_name = rows_letter[r]
         for n in range(1, hall.cols + 1):
             seat = Seat(
                 hall_id=hall.id,
@@ -198,7 +219,7 @@ def create_hall(cinema_id):
             )
             db.session.add(seat)
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '影厅创建成功', 'hall': hall.to_dict()})
 
 
@@ -213,23 +234,29 @@ def update_hall(hall_id):
     hall = Hall.query.get(hall_id)
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404
-    
+
     data = request.get_json()
-    
+
     if 'name' in data:
         hall.name = data['name']
     if 'hall_type' in data:
         hall.hall_type = data['hall_type']
     if 'rows' in data:
-        hall.rows = data['rows']
+        rows = data['rows']
+        if not isinstance(rows, int) or rows < 1 or rows > 26:
+            return jsonify({'success': False, 'message': '影厅行数必须在1-26之间'}), 400
+        hall.rows = rows
     if 'cols' in data:
-        hall.cols = data['cols']
+        cols = data['cols']
+        if not isinstance(cols, int) or cols < 1 or cols > 100:
+            return jsonify({'success': False, 'message': '影厅列数必须在1-100之间'}), 400
+        hall.cols = cols
     if 'status' in data:
         hall.status = data['status']
-    
+
     hall.total_seats = hall.rows * hall.cols
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '影厅更新成功', 'hall': hall.to_dict()})
 
 
@@ -244,10 +271,19 @@ def delete_hall(hall_id):
     hall = Hall.query.get(hall_id)
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404
-    
+
+    # 检查是否有摄像头关联
+    from models import Camera
+    camera_count = Camera.query.filter_by(hall_id=hall_id).count()
+    if camera_count > 0:
+        return jsonify({'success': False, 'message': f'该影厅下有{camera_count}个摄像头，无法删除'}), 400
+
+    # 删除关联的座位
+    Seat.query.filter_by(hall_id=hall_id).delete()
+
     db.session.delete(hall)
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '影厅删除成功'})
 
 

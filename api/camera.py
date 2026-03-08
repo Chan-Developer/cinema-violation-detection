@@ -168,14 +168,20 @@ def delete_camera(camera_id):
     identity = get_jwt_identity()
     if identity['role'] != 'admin':
         return jsonify({'success': False, 'message': '权限不足'}), 403
-    
+
     camera = Camera.query.get(camera_id)
     if not camera:
         return jsonify({'success': False, 'message': '摄像头不存在'}), 404
-    
+
+    # 检查是否有报警关联
+    from models import Alarm
+    alarm_count = camera.alarms.count() if hasattr(camera, 'alarms') and camera.alarms else 0
+    if alarm_count > 0:
+        return jsonify({'success': False, 'message': f'该摄像头下有{alarm_count}条报警，无法删除'}), 400
+
     db.session.delete(camera)
     db.session.commit()
-    
+
     return jsonify({'success': True, 'message': '摄像头删除成功'})
 
 

@@ -173,6 +173,12 @@ def update_user(user_id):
 
     data = request.get_json()
 
+    # 检查用户名是否被修改，如果被修改则检查是否重复
+    if 'username' in data and data['username'] != user.username:
+        if User.query.filter_by(username=data['username']).first():
+            return jsonify({'success': False, 'message': '用户名已存在'}), 400
+        user.username = data['username']
+
     if 'real_name' in data:
         user.real_name = data['real_name']
     if 'email' in data:
