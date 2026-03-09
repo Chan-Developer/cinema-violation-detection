@@ -72,7 +72,7 @@ def create_camera():
     if claims.get('role') not in ['admin', 'manager', 'maintenance']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     name = data.get('name')
     cinema_id = data.get('cinema_id')
 
@@ -113,15 +113,15 @@ def create_camera():
 @jwt_required()
 def update_camera(camera_id):
     """更新摄像头"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'manager', 'maintenance']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'manager', 'maintenance']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
     
     camera = Camera.query.get(camera_id)
     if not camera:
         return jsonify({'success': False, 'message': '摄像头不存在'}), 404
     
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     
     if 'name' in data:
         camera.name = data['name']
@@ -165,8 +165,8 @@ def update_camera(camera_id):
 @jwt_required()
 def delete_camera(camera_id):
     """删除摄像头"""
-    identity = get_jwt_identity()
-    if identity['role'] != 'admin':
+    _, claims = get_current_user_info()
+    if claims.get('role') != 'admin':
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     camera = Camera.query.get(camera_id)
@@ -217,15 +217,15 @@ def get_camera_status(camera_id):
 @jwt_required()
 def update_camera_status(camera_id):
     """更新摄像头状态"""
-    identity = get_jwt_identity()
-    if identity['role'] not in ['admin', 'maintenance']:
+    _, claims = get_current_user_info()
+    if claims.get('role') not in ['admin', 'maintenance']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
     
     camera = Camera.query.get(camera_id)
     if not camera:
         return jsonify({'success': False, 'message': '摄像头不存在'}), 404
     
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     
     # 记录状态
     status_record = CameraStatus(

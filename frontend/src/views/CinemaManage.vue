@@ -70,6 +70,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { getApiErrorMessage } from '../utils/error'
 
 const authStore = useAuthStore()
 
@@ -82,8 +83,6 @@ const formRef = ref<FormInstance>()
 const form = reactive({ name: '', city: '', district: '', address: '', phone: '', contact: '', status: 1 })
 const formRules: FormRules = {
   name: [{ required: true, message: '请输入影院名称', trigger: 'blur' }],
-  city: [{ required: true, message: '请输入城市', trigger: 'blur' }],
-  address: [{ required: true, message: '请输入地址', trigger: 'blur' }],
 }
 
 const loadCinemas = async () => {
@@ -109,22 +108,24 @@ const editCinema = (c: any) => {
 
 const saveCinema = async () => {
   if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    try {
-      if (editingCinema.value) {
-        await authStore.api.put(`/cinemas/${editingCinema.value.id}`, form)
-        ElMessage.success('更新成功')
-      } else {
-        await authStore.api.post('/cinemas', form)
-        ElMessage.success('添加成功')
-      }
-      showDialog.value = false
-      loadCinemas()
-    } catch (e: any) {
-      ElMessage.error(e.response?.data?.message || '操作失败')
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+
+  try {
+    const payload = { ...form }
+    if (editingCinema.value) {
+      await authStore.api.put(`/cinemas/${editingCinema.value.id}`, payload)
+      ElMessage.success('更新成功')
+    } else {
+      await authStore.api.post('/cinemas', payload)
+      ElMessage.success('添加成功')
     }
-  })
+    showDialog.value = false
+    loadCinemas()
+  } catch (e: any) {
+    console.error('saveCinema failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '操作失败'))
+  }
 }
 
 const deleteCinema = async (c: any) => {
@@ -134,7 +135,8 @@ const deleteCinema = async (c: any) => {
     ElMessage.success('删除成功')
     loadCinemas()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '删除失败')
+    console.error('deleteCinema failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '删除失败'))
   }
 }
 

@@ -69,7 +69,7 @@ def create_cinema():
     if claims.get('role') not in ['admin', 'manager']:
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     name = data.get('name')
 
     if not name:
@@ -103,7 +103,7 @@ def update_cinema(cinema_id):
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     
     if 'name' in data:
         cinema.name = data['name']
@@ -176,7 +176,7 @@ def create_hall(cinema_id):
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     name = data.get('name')
 
     if not name:
@@ -235,7 +235,7 @@ def update_hall(hall_id):
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     if 'name' in data:
         hall.name = data['name']

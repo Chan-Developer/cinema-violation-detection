@@ -76,9 +76,15 @@ def register_routes(app):
     
     @app.route('/<path:path>')
     def serve_spa(path):
-        """SPA路由回退 — 非API/静态资源路径一律返回index.html"""
+        """SPA路由回退 — 先检查静态文件，再返回index.html"""
         if path.startswith('api/') or path.startswith('socket.io/'):
             return jsonify({'error': 'Not Found'}), 404
+
+        # 检查是否是存在的静态文件（.html等）
+        static_file = os.path.join('frontend/dist', path)
+        if os.path.isfile(static_file):
+            return send_from_directory('frontend/dist', path)
+
         return render_template('index.html')
 
 

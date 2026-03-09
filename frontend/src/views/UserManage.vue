@@ -48,11 +48,11 @@
 
     <!-- 新增/编辑对话框 -->
     <el-dialog v-model="showDialog" :title="editingUser ? '编辑用户' : '添加用户'" width="520px" top="8vh">
-      <el-form :model="userForm" label-width="80px">
-        <el-form-item label="用户名">
+      <el-form :model="userForm" :rules="formRules" ref="formRef" label-width="80px">
+        <el-form-item label="用户名" prop="username">
           <el-input v-model="userForm.username" :disabled="!!editingUser" placeholder="登录用户名" />
         </el-form-item>
-        <el-form-item label="密码" v-if="!editingUser">
+        <el-form-item label="密码" prop="password" v-if="!editingUser">
           <el-input v-model="userForm.password" type="password" show-password placeholder="设置密码" />
         </el-form-item>
         <el-form-item label="姓名">
@@ -64,7 +64,7 @@
         <el-form-item label="手机">
           <el-input v-model="userForm.phone" placeholder="手机号码" />
         </el-form-item>
-        <el-form-item label="角色">
+        <el-form-item label="角色" prop="role_id">
           <el-select v-model="userForm.role_id" style="width: 100%">
             <el-option v-for="r in roles" :key="r.id" :label="r.description" :value="r.id" />
           </el-select>
@@ -89,7 +89,8 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { getApiErrorMessage } from '../utils/error'
 
 const authStore = useAuthStore()
 
@@ -99,11 +100,26 @@ const roles = ref<any[]>([])
 const cinemas = ref<any[]>([])
 const showDialog = ref(false)
 const editingUser = ref<any>(null)
+const formRef = ref<FormInstance>()
 
 const userForm = reactive({
   username: '', password: '', real_name: '', email: '', phone: '',
   role_id: null as number | null, cinema_id: null as number | null, status: 1
 })
+const formRules: FormRules = {
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  password: [{
+    validator: (_rule, value, callback) => {
+      if (!editingUser.value && !value) {
+        callback(new Error('请输入密码'))
+        return
+      }
+      callback()
+    },
+    trigger: 'blur'
+  }],
+  role_id: [{ required: true, message: '请选择角色', trigger: 'change' }],
+}
 const pagination = reactive({ page: 1, total: 0 })
 
 const loadUsers = async () => {
@@ -152,18 +168,25 @@ const editUser = (u: any) => {
 }
 
 const saveUser = async () => {
+  if (!formRef.value) return
+
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+
   try {
+    const payload = { ...userForm }
     if (editingUser.value) {
-      await authStore.api.put(`/auth/users/${editingUser.value.id}`, userForm)
+      await authStore.api.put(`/auth/users/${editingUser.value.id}`, payload)
       ElMessage.success('更新成功')
     } else {
-      await authStore.api.post('/auth/users', userForm)
+      await authStore.api.post('/auth/users', payload)
       ElMessage.success('添加成功')
     }
     showDialog.value = false
     loadUsers()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '操作失败')
+    console.error('saveUser failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '操作失败'))
   }
 }
 
@@ -174,7 +197,8 @@ const deleteUser = async (u: any) => {
     ElMessage.success('删除成功')
     loadUsers()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '删除失败')
+    console.error('deleteUser failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '删除失败'))
   }
 }
 

@@ -51,7 +51,7 @@ def create_role():
     if claims.get('role') != 'admin':
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     name = data.get('name')
     description = data.get('description')
 
@@ -90,7 +90,7 @@ def update_role(role_id):
     if not role:
         return jsonify({'success': False, 'message': '角色不存在'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     if 'name' in data:
         # 检查名称是否被修改

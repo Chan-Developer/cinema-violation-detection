@@ -42,6 +42,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getApiErrorMessage } from '../utils/error'
 
 const authStore = useAuthStore()
 
@@ -92,17 +93,19 @@ const saveRole = async () => {
       return
     }
 
+    const payload = { ...roleForm }
     if (editingRole.value) {
-      await authStore.api.put(`/roles/${editingRole.value.id}`, roleForm)
+      await authStore.api.put(`/roles/${editingRole.value.id}`, payload)
       ElMessage.success('更新成功')
     } else {
-      await authStore.api.post('/roles', roleForm)
+      await authStore.api.post('/roles', payload)
       ElMessage.success('添加成功')
     }
     showDialog.value = false
     loadRoles()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '操作失败')
+    console.error('saveRole failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '操作失败'))
   }
 }
 
@@ -113,7 +116,8 @@ const deleteRole = async (r: any) => {
     ElMessage.success('删除成功')
     loadRoles()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '删除失败')
+    console.error('deleteRole failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '删除失败'))
   }
 }
 

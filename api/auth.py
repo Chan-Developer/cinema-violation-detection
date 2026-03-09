@@ -23,7 +23,7 @@ def get_current_user_with_claims():
 @auth_bp.route('/login', methods=['POST'])
 def login():
     """用户登录"""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     username = data.get('username')
     password = data.get('password')
     
@@ -131,7 +131,7 @@ def create_user():
     if claims.get('role') != 'admin':
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     username = data.get('username')
     password = data.get('password')
     role_id = data.get('role_id')
@@ -171,7 +171,7 @@ def update_user(user_id):
     if not user:
         return jsonify({'success': False, 'message': '用户不存在'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     # 检查用户名是否被修改，如果被修改则检查是否重复
     if 'username' in data and data['username'] != user.username:

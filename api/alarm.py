@@ -111,7 +111,7 @@ def resolve_alarm(alarm_id):
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     alarm.status = 2  # 已处理
     alarm.handler_id = user_id
@@ -133,7 +133,7 @@ def ignore_alarm(alarm_id):
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     alarm.status = 3  # 已忽略
     alarm.handler_id = user_id
@@ -242,12 +242,12 @@ def get_alarm_levels():
 @jwt_required()
 def get_pending_count():
     """获取待处理报警数量"""
-    identity = get_jwt_identity()
+    _, claims = get_current_user_info()
     
     query = Alarm.query.filter_by(status=0)
     
-    if identity['role'] == 'manager' and identity.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == identity['cinema_id'])
+    if claims.get('role') == 'manager' and claims.get('cinema_id'):
+        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
     
     count = query.count()
     

@@ -13,21 +13,32 @@ export const useAuthStore = defineStore('auth', () => {
   const userRole = computed(() => user.value?.role || '')
   const username = computed(() => user.value?.username || '')
 
-  const api = axios.create({
+  const http = axios.create({
     baseURL: API_BASE,
-    timeout: 30000
+    timeout: 30000,
+    headers: {
+      'Content-Type': 'application/json'
+    }
   })
 
-  api.interceptors.request.use(config => {
+  http.interceptors.request.use(config => {
     if (token.value) {
       config.headers.Authorization = `Bearer ${token.value}`
     }
     return config
   })
 
-  api.interceptors.response.use(
+  http.interceptors.response.use(
     response => response,
     error => {
+      console.error('[API Error]', {
+        method: error.config?.method,
+        url: error.config?.url,
+        status: error.response?.status,
+        message: error.message,
+        data: error.response?.data
+      })
+
       if (error.response?.status === 401) {
         logout()
         window.location.href = '/login'
@@ -35,6 +46,17 @@ export const useAuthStore = defineStore('auth', () => {
       return Promise.reject(error)
     }
   )
+
+  // 不能直接把 axios instance 返回给 Pinia：
+  // axios instance 是 callable function，会被 Pinia 当作 action 包装，导致 .post/.get 丢失。
+  const api = {
+    request: http.request.bind(http),
+    get: http.get.bind(http),
+    post: http.post.bind(http),
+    put: http.put.bind(http),
+    delete: http.delete.bind(http),
+    patch: http.patch.bind(http),
+  }
 
   async function login(username: string, password: string) {
     const res = await api.post('/auth/login', { username, password })

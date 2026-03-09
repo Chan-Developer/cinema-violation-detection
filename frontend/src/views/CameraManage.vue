@@ -92,6 +92,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getApiErrorMessage } from '../utils/error'
 
 const authStore = useAuthStore()
 
@@ -156,6 +157,15 @@ const editCamera = (cam: any) => {
 }
 
 const saveCamera = async () => {
+  if (!cameraForm.name?.trim()) {
+    ElMessage.error('请输入摄像头名称')
+    return
+  }
+  if (!cameraForm.cinema_id) {
+    ElMessage.error('请选择所属影院')
+    return
+  }
+
   try {
     const data = { ...cameraForm, detection_types: cameraForm.detection_types.join(',') }
     if (editingCamera.value) {
@@ -168,7 +178,8 @@ const saveCamera = async () => {
     showDialog.value = false
     loadCameras()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '操作失败')
+    console.error('saveCamera failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '操作失败'))
   }
 }
 
@@ -179,7 +190,8 @@ const deleteCamera = async (cam: any) => {
     ElMessage.success('删除成功')
     loadCameras()
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '删除失败')
+    console.error('deleteCamera failed:', e)
+    ElMessage.error(getApiErrorMessage(e, '删除失败'))
   }
 }
 
