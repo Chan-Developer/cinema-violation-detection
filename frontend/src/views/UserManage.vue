@@ -7,31 +7,32 @@
     </div>
 
     <el-card>
-      <el-table :data="users" stripe v-loading="loading" style="width: 100%">
-        <el-table-column prop="id" label="ID" width="60" />
-        <el-table-column prop="username" label="用户名" width="120" />
-        <el-table-column prop="real_name" label="姓名" width="120" />
-        <el-table-column prop="email" label="邮箱" min-width="180" />
-        <el-table-column prop="phone" label="手机" width="130" />
-        <el-table-column prop="role" label="角色" width="110">
+      <el-table :data="users" stripe v-loading="loading" style="width: 100%" :default-sort="{ prop: 'id', order: 'ascending' }">
+        <el-table-column prop="id" label="ID" width="50" align="center" />
+        <el-table-column prop="username" label="用户名" min-width="100" show-overflow-tooltip />
+        <el-table-column prop="real_name" label="姓名" min-width="90" show-overflow-tooltip />
+        <el-table-column prop="email" label="邮箱" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="phone" label="手机" min-width="110" show-overflow-tooltip />
+        <el-table-column prop="role" label="角色" width="95">
           <template #default="{ row }">
             <el-tag :type="getRoleTag(row.role)" size="small" effect="light" round>
               {{ getRoleName(row.role) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="cinema_name" label="所属影院" width="120" />
-        <el-table-column prop="status" label="状态" width="80" align="center">
+        <el-table-column prop="cinema_name" label="影院" min-width="100" show-overflow-tooltip />
+        <el-table-column prop="status" label="状态" width="70" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status ? 'success' : 'danger'" size="small" round>
               {{ row.status ? '启用' : '禁用' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="last_login" label="最后登录" width="175" />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column prop="last_login" label="最后登录" min-width="130" show-overflow-tooltip />
+        <el-table-column label="操作" width="120" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link size="small" @click="editUser(row)">编辑</el-button>
+            <el-divider direction="vertical" />
             <el-button type="danger" link size="small" @click="deleteUser(row)" :disabled="row.username === 'admin'">删除</el-button>
           </template>
         </el-table-column>

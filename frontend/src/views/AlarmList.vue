@@ -37,44 +37,53 @@
 
     <!-- 报警列表 -->
     <el-card>
-      <el-table :data="alarms" stripe v-loading="loading" style="width: 100%">
-        <el-table-column prop="id" label="ID" width="60" />
-        <el-table-column prop="alarm_type" label="类型" width="110">
+      <el-table :data="alarms" stripe v-loading="loading" style="width: 100%" :default-sort="{ prop: 'id', order: 'descending' }">
+        <el-table-column prop="id" label="ID" width="50" align="center" />
+        <el-table-column prop="alarm_type" label="类型" min-width="85">
           <template #default="{ row }">
             <el-tag :type="getTypeTag(row.alarm_type_code)" size="small" effect="light" round>
               {{ row.alarm_type }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="camera_name" label="摄像头" width="130" />
-        <el-table-column prop="location" label="位置" width="160" show-overflow-tooltip />
-        <el-table-column prop="level_name" label="级别" width="80">
+        <el-table-column prop="title" label="标题" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="camera_name" label="摄像头" min-width="100" show-overflow-tooltip />
+        <el-table-column prop="location" label="位置" min-width="100" show-overflow-tooltip />
+        <el-table-column prop="level_name" label="级别" width="80" align="center">
           <template #default="{ row }">
             <el-tag :color="row.level_color" effect="dark" size="small" round>
               {{ row.level_name }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="confidence" label="置信度" width="85">
+        <el-table-column prop="confidence" label="置信度" width="85" align="center">
           <template #default="{ row }">
             {{ row.confidence ? (row.confidence * 100).toFixed(1) + '%' : '-' }}
           </template>
         </el-table-column>
-        <el-table-column prop="occurred_at" label="发生时间" width="175" />
-        <el-table-column prop="status_text" label="状态" width="90">
+        <el-table-column prop="occurred_at" label="发生时间" min-width="145" show-overflow-tooltip />
+        <el-table-column prop="status_text" label="状态" width="80" align="center">
           <template #default="{ row }">
             <el-tag :type="getStatusTag(row.status)" size="small" round>
               {{ row.status_text }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="130" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="viewDetail(row)">详情</el-button>
-            <el-button v-if="row.status === 0" type="success" link size="small" @click="handleAlarm(row, 'confirm')">确认</el-button>
-            <el-button v-if="row.status === 1" type="warning" link size="small" @click="handleAlarm(row, 'resolve')">处理</el-button>
-            <el-button v-if="row.status < 2" type="info" link size="small" @click="handleAlarm(row, 'ignore')">忽略</el-button>
+            <el-dropdown trigger="click">
+              <el-button type="primary" link size="small">
+                操作 <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="viewDetail(row)">详情</el-dropdown-item>
+                  <el-dropdown-item v-if="row.status === 0" @click="handleAlarm(row, 'confirm')">确认</el-dropdown-item>
+                  <el-dropdown-item v-if="row.status === 1" @click="handleAlarm(row, 'resolve')">处理</el-dropdown-item>
+                  <el-dropdown-item v-if="row.status < 2" @click="handleAlarm(row, 'ignore')">忽略</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -135,6 +144,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, ArrowDown } from '@element-plus/icons-vue'
 
 const authStore = useAuthStore()
 
