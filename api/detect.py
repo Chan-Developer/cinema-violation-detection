@@ -84,23 +84,30 @@ def detect_image():
         os.makedirs(upload_dir, exist_ok=True)
         filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
+        print(f"✓ 文件已保存: {filepath}")
 
         # 读取图片
         if not is_image(filename):
             # 如果是视频，提取第一帧
+            print(f"提取视频第一帧...")
             cap = cv2.VideoCapture(filepath)
             ret, frame = cap.read()
             cap.release()
             if not ret:
                 return jsonify({'success': False, 'message': '无法读取视频文件'}), 400
         else:
+            print(f"读取图片文件...")
             frame = cv2.imread(filepath)
             if frame is None:
                 return jsonify({'success': False, 'message': '无法读取图片文件'}), 400
 
+        print(f"图片尺寸: {frame.shape}")
+
         # 执行检测
+        print(f"开始 YOLO 检测...")
         worker = DetectionWorker(camera_id=0, detection_types='person,car,dog,cat,phone')
         detections = worker._detect(frame)
+        print(f"检测完成，发现 {len(detections)} 个对象")
 
         # 绘制检测框并格式化为前端需要的格式
         annotated_frame = frame.copy()
@@ -123,20 +130,24 @@ def detect_image():
         _, buffer = cv2.imencode('.jpg', annotated_frame)
         img_base64 = base64.b64encode(buffer).decode('utf-8')
 
-        # 尝试使用LLM获取描述
+        # 尝试使用LLM获取分析结果
         llm_description = None
         try:
-            from utils.llm import call_llm_api, generate_local_description
-            # 即使没有检测到任何物体，也生成描述
-            llm_description = call_llm_api(detections, filepath)
+            from utils.llm import call_llm_api
+            # 调用LLM分析标注图片（包含YOLO检测框）
+            print(f"调用 LLM API 分析标注图片...")
+            llm_description = call_llm_api(formatted_detections, img_base64)
+            print(f"✓ LLM 分析完成")
         except Exception as e:
-            print(f"LLM描述API失败: {e}")
-            # 使用本地生成的描述作为备选方案
+            print(f"⚠️  LLM分析失败: {e}")
+            # 使用本地分析结果作为备选方案
             try:
-                from utils.llm import generate_local_description
-                llm_description = generate_local_description(detections)
-            except:
-                llm_description = "检测完成，描述生成失败"
+                from utils.llm import generate_local_analysis
+                print(f"使用本地分析...")
+                llm_description = generate_local_analysis(formatted_detections)
+            except Exception as e2:
+                print(f"⚠️  本地分析失败: {e2}")
+                llm_description = '分析生成失败'
 
         # 清理
         if os.path.exists(filepath):
@@ -150,6 +161,9 @@ def detect_image():
         })
 
     except Exception as e:
+        print(f"❌ 检测API错误: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 

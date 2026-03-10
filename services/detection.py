@@ -119,7 +119,7 @@ class DetectionWorker(threading.Thread):
 
     @classmethod
     def _load_model(cls):
-        """加载 YOLO 模型 (单例模式)"""
+        """加载 YOLO 模型 (单例模式，自动下载)"""
         if cls._model is not None:
             return
 
@@ -128,17 +128,15 @@ class DetectionWorker(threading.Thread):
                 return
 
             try:
-                model_path = 'yolov8x.pt'
-                if os.path.exists(model_path):
-                    print(f"正在加载 YOLO 模型: {model_path}")
-                    cls._model = YOLO(model_path)
-                    cls._model.to('cpu')  # 使用 CPU (如果有 GPU 改为 'cuda')
-                    print(f"✓ YOLO 模型加载成功")
-                else:
-                    print(f"❌ YOLO 权重文件不存在: {model_path}")
-                    cls._model = None
+                print("正在加载 YOLO 模型...")
+                # 使用 'yolov8x' 而不是本地文件，YOLO 库会自动下载并缓存模型
+                cls._model = YOLO('yolov8x.pt', verbose=False)
+                # cls._model.to('cpu')  # 使用 CPU，YOLO 8会自动选择最佳设备
+                print(f"✓ YOLO 模型加载成功")
             except Exception as e:
                 print(f"❌ 加载 YOLO 模型失败: {e}")
+                import traceback
+                traceback.print_exc()
                 cls._model = None
         
     def run(self):
@@ -172,8 +170,12 @@ class DetectionWorker(threading.Thread):
         """执行检测 - 使用 YOLO 实时检测"""
         results = []
 
-        if not self.use_yolo or self._model is None:
-            # 降级到模拟检测
+        if not self.use_yolo:
+            # YOLO 不可用，使用模拟检测
+            return self._detect_simulated(frame)
+
+        if self._model is None:
+            print("⚠️  警告: YOLO 模型未加载，使用模拟检测")
             return self._detect_simulated(frame)
 
         try:
@@ -219,7 +221,9 @@ class DetectionWorker(threading.Thread):
                     self.last_detection_time[det_type] = current_time
 
         except Exception as e:
-            print(f"YOLO 检测错误: {e}")
+            print(f"❌ YOLO 检测错误: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
         return results
