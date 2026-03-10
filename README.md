@@ -13,20 +13,36 @@
 
 ## 🚀 快速启动
 
-### 后端启动
+### Linux/macOS（推荐）
 ```bash
 cd project
+chmod +x start.sh
+./start.sh
+```
+
+### Windows
+```cmd
+cd project
+start.bat
+```
+
+### 手动启动
+```bash
+# 1. 安装依赖
+pip install -r requirements.txt
+
+# 2. 创建数据库（MySQL需要先启动）
+python3 init_db.py
+
+# 3. 启动应用
 python3 app.py
 ```
-- 访问: http://localhost:9500
-- 默认账号: `admin` / `admin123`
 
-### 前端编译（可选）
-```bash
-cd frontend
-npm install
-npm run build
-```
+启动成功后访问: **http://localhost:9500**
+- 账号: `admin`
+- 密码: `admin123`
+
+> 详细启动说明请查看 [STARTUP_GUIDE.md](STARTUP_GUIDE.md)
 
 ## 📊 系统架构
 
