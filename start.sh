@@ -1,108 +1,76 @@
 #!/bin/bash
 
 # 影院不文明行为检测系统 - 启动脚本
-# 使用方法: ./start.sh
 
-set -e
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-echo "=================================="
-echo "影院不文明行为检测系统 - 启动脚本"
-echo "=================================="
-echo ""
+echo -e "${GREEN}=====================================${NC}"
+echo -e "${GREEN}  智慧影院 - 行为检测系统启动${NC}"
+echo -e "${GREEN}=====================================${NC}"
 
-# 检查Docker是否安装
-if ! command -v docker &> /dev/null; then
-    echo "❌ 错误: 未检测到 Docker"
-    echo "请先安装 Docker: https://www.docker.com/products/docker-desktop"
+# 检查 Python
+echo -e "${YELLOW}[1/4] 检查Python环境...${NC}"
+if ! command -v python3 &> /dev/null; then
+    echo -e "${RED}❌ Python3 未安装${NC}"
     exit 1
 fi
+echo -e "${GREEN}✓ Python已安装${NC}"
 
-if ! command -v docker-compose &> /dev/null; then
-    echo "❌ 错误: 未检测到 Docker Compose"
-    echo "请先安装 Docker Compose"
-    exit 1
-fi
-
-echo "✓ Docker 已安装"
-echo ""
-
-# 第一步: 启动 MySQL
-echo "📦 第一步: 启动 MySQL 容器..."
-if docker-compose up -d; then
-    echo "✓ MySQL 启动成功"
-    echo ""
-
-    # 等待 MySQL 启动
-    echo "⏳ 等待 MySQL 就绪..."
-    sleep 5
-
-    # 检查 MySQL 连接
-    if docker-compose exec -T mysql mysql -uroot -proot123 -e "SELECT 1;" > /dev/null 2>&1; then
-        echo "✓ MySQL 连接成功"
-    else
-        echo "⚠️  MySQL 正在启动，请稍候..."
-        sleep 5
-    fi
+# 检查依赖
+echo -e "${YELLOW}[2/4] 检查依赖包...${NC}"
+if [ -f "requirements.txt" ]; then
+    pip install -q -r requirements.txt
+    echo -e "${GREEN}✓ 依赖包已安装${NC}"
 else
-    echo "❌ MySQL 启动失败"
+    echo -e "${RED}❌ 未找到 requirements.txt${NC}"
     exit 1
 fi
 
-echo ""
-echo "📋 第二步: 检查 Python 环境..."
+# 检查 MySQL
+echo -e "${YELLOW}[3/4] 检查 MySQL...${NC}"
+python3 << 'PYEOF'
+import sys
+try:
+    import mysql.connector
+    conn = mysql.connector.connect(
+        host='localhost',
+        user='root',
+        password='root123'
+    )
+    cursor = conn.cursor()
+    cursor.execute("CREATE DATABASE IF NOT EXISTS cinema_detection CHARACTER SET utf8mb4")
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print("✓ MySQL数据库已就绪")
+except Exception as e:
+    print(f"❌ MySQL错误: {e}")
+    print("\n故障排查:")
+    print("1. 确保MySQL已启动")
+    print("2. 默认用户: root, 密码: root123")
+    print("3. 修改密码请编辑 config.py")
+    sys.exit(1)
+PYEOF
 
-# 检查虚拟环境
-if [ ! -d "venv" ]; then
-    echo "创建虚拟环境..."
-    python3 -m venv venv
+if [ $? -ne 0 ]; then
+    exit 1
 fi
 
-# 激活虚拟环境
-source venv/bin/activate || . venv/Scripts/activate
-
-echo "✓ 虚拟环境已激活"
+# 启动应用
+echo -e "${YELLOW}[4/4] 启动应用...${NC}"
+echo ""
+echo -e "${GREEN}=====================================${NC}"
+echo -e "${GREEN}  系统启动成功!${NC}"
+echo -e "${GREEN}=====================================${NC}"
+echo ""
+echo -e "  🌐 访问地址:  http://localhost:9500"
+echo -e "  👤 默认账号:  admin"
+echo -e "  🔐 默认密码:  admin123"
+echo ""
+echo -e "${YELLOW}  按 Ctrl+C 停止服务${NC}"
 echo ""
 
-# 第三步: 安装依赖
-echo "📚 第三步: 安装 Python 依赖..."
-pip install -q -r requirements.txt 2>/dev/null || pip install -r requirements.txt
-echo "✓ 依赖安装完成"
-echo ""
-
-# 第四步: 配置环境变量
-echo "⚙️  第四步: 配置环境变量..."
-if [ ! -f ".env" ]; then
-    echo "创建 .env 文件..."
-    cp .env.example .env
-    echo "✓ .env 文件已创建"
-    echo "  提示: 如果使用Docker MySQL，请在.env中设置:"
-    echo "    DB_HOST=mysql"
-    echo "    DB_PORT=3306"
-    echo "    DB_USER=root"
-    echo "    DB_PASSWORD=root123"
-else
-    echo "✓ .env 文件已存在"
-fi
-
-echo ""
-echo "=================================="
-echo "✓ 启动完成！"
-echo "=================================="
-echo ""
-echo "🌐 访问地址:"
-echo "   应用: http://localhost:9500"
-echo "   MySQL管理: http://localhost:8081 (用户: root, 密码: root123)"
-echo ""
-echo "👤 默认账号:"
-echo "   用户名: admin"
-echo "   密码: admin123"
-echo ""
-echo "📖 查看日志:"
-echo "   MySQL: docker-compose logs -f mysql"
-echo "   应用: python app.py"
-echo ""
-echo "🛑 停止服务:"
-echo "   docker-compose stop"
-echo ""
-echo "📚 详细说明请参考: DOCKER_SETUP.md"
-echo ""
+python3 app.py
