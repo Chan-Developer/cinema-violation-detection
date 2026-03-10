@@ -35,9 +35,8 @@ wheels/
 
 # Frontend
 node_modules/
-frontend/dist/assets/
 frontend/.env.local
-frontend/dist/.env.local
+frontend/.dist/
 
 # Environment
 .env

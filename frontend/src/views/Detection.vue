@@ -1,10 +1,17 @@
 <template>
   <div class="detection-page">
+    <!-- 上传区域 -->
     <el-card class="upload-card">
-      <h3>📸 图片/视频检测</h3>
+      <template #header>
+        <div class="card-header">
+          <span class="title">📸 智能检测系统</span>
+          <el-tag>YOLO + LLM</el-tag>
+        </div>
+      </template>
+
       <el-upload
         drag
-        :action="`${apiUrl}/api/detect`"
+        :action="`/api/detect`"
         :headers="uploadHeaders"
         :on-success="onUploadSuccess"
         :on-error="onUploadError"
@@ -14,79 +21,123 @@
         class="upload-area"
       >
         <el-icon class="el-icon--upload"><upload-filled /></el-icon>
-        <div class="el-upload__text">拖拽文件到这里或<em>点击上传</em></div>
+        <div class="el-upload__text">拖拽或点击上传</div>
         <template #tip>
-          <div class="el-upload__tip">
-            支持图片（JPG/PNG/GIF）和视频（MP4/AVI/MOV/WebM），最大 200MB
-          </div>
+          <div class="el-upload__tip">支持JPG/PNG/GIF图片 和 MP4/WebM视频（最大200MB）</div>
         </template>
       </el-upload>
     </el-card>
 
     <!-- 检测结果 -->
-    <div v-if="results.length > 0" class="results-container">
-      <h3>🎯 检测结果</h3>
+    <div v-if="results.length > 0" class="results-section">
+      <div class="section-header">
+        <h3>🎯 检测结果</h3>
+        <el-button type="primary" link @click="clearResults">清空历史</el-button>
+      </div>
+
       <div class="results-grid">
         <el-card v-for="(result, index) in results" :key="index" class="result-card">
+          <!-- 进度条 -->
+          <el-progress
+            v-if="result.processing"
+            :percentage="result.progress || 0"
+            :status="result.progress === 100 ? 'success' : 'exception'"
+            class="processing-bar"
+          />
+
           <!-- 标注图片 -->
-          <div v-if="result.annotated_image" class="image-container">
-            <img :src="result.annotated_image" alt="检测结果" class="annotated-image" />
+          <div v-if="result.annotated_image" class="image-box">
+            <img :src="result.annotated_image" :alt="`检测 ${index}`" class="detection-image" />
+            <div class="image-info">
+              <span>{{ new Date(result.timestamp).toLocaleTimeString('zh-CN') }}</span>
+            </div>
           </div>
 
-          <!-- 检测到的物体 -->
-          <div v-if="result.detections && result.detections.length > 0" class="detections-section">
-            <h4>📋 检测到的物体 ({{ result.detections.length }})</h4>
-            <div class="detection-list">
+          <!-- YOLO检测结果 -->
+          <div v-if="result.detections && result.detections.length > 0" class="yolo-section">
+            <div class="section-title">
+              <el-icon><Setting /></el-icon> YOLO检测 ({{ result.detections.length }})
+            </div>
+            <div class="detection-items">
               <div v-for="(det, i) in result.detections" :key="i" class="detection-item">
-                <el-tag :type="getConfidenceType(det.confidence)" effect="light">
-                  {{ det.class }} - {{ (det.confidence * 100).toFixed(1) }}%
+                <el-tag
+                  :type="getConfidenceType(det.confidence)"
+                  :style="{ opacity: det.confidence }"
+                  effect="light"
+                  class="detection-tag"
+                >
+                  <span class="class-name">{{ det.class }}</span>
+                  <span class="confidence">{{ (det.confidence * 100).toFixed(0) }}%</span>
                 </el-tag>
               </div>
             </div>
           </div>
 
-          <!-- LLM 描述 -->
-          <div v-if="result.llm_description" class="description-section">
-            <h4>🤖 智能描述</h4>
-            <el-alert
-              :title="result.llm_description"
-              type="info"
-              :closable="false"
-              description=""
-            />
+          <!-- LLM智能分析 -->
+          <div v-if="result.llm_description" class="llm-section">
+            <div class="section-title">
+              <el-icon><DataAnalysis /></el-icon> 智能分析
+            </div>
+            <div class="llm-content">
+              {{ result.llm_description }}
+            </div>
           </div>
 
-          <!-- 错误信息 -->
-          <div v-if="result.error" class="error-section">
-            <el-alert
-              :title="`错误: ${result.error}`"
-              type="error"
-              :closable="false"
-            />
+          <!-- 错误提示 -->
+          <el-alert
+            v-if="result.error"
+            :title="`错误: ${result.error}`"
+            type="error"
+            :closable="false"
+            style="margin-top: 16px"
+          />
+
+          <!-- 操作按钮 -->
+          <div class="result-actions">
+            <el-button type="primary" link @click="downloadResult(result)">
+              <el-icon><Download /></el-icon> 下载
+            </el-button>
+            <el-button type="danger" link @click="deleteResult(index)">
+              <el-icon><Delete /></el-icon> 删除
+            </el-button>
           </div>
         </el-card>
       </div>
     </div>
 
-    <!-- 检测历史 -->
-    <el-card v-if="historyVisible" class="history-card">
-      <h3>📜 检测历史</h3>
-      <el-table :data="results" stripe style="width: 100%">
-        <el-table-column prop="timestamp" label="时间" width="180" />
-        <el-table-column prop="detections" label="检测数" width="80">
-          <template #default="{ row }">
-            {{ row.detections?.length || 0 }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="llm_description" label="描述" min-width="300" show-overflow-tooltip />
-        <el-table-column label="操作" width="100">
-          <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="downloadResult(row)">
-              下载
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+    <!-- 统计信息 -->
+    <el-card v-if="results.length > 0" class="stats-card">
+      <template #header>
+        <div class="card-header">
+          <span class="title">📊 统计信息</span>
+        </div>
+      </template>
+      <el-row :gutter="20">
+        <el-col :xs="12" :sm="6">
+          <div class="stat-item">
+            <div class="stat-value">{{ totalDetections }}</div>
+            <div class="stat-label">总检测数</div>
+          </div>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <div class="stat-item">
+            <div class="stat-value">{{ results.length }}</div>
+            <div class="stat-label">图片/视频数</div>
+          </div>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <div class="stat-item">
+            <div class="stat-value">{{ avgConfidence }}</div>
+            <div class="stat-label">平均置信度</div>
+          </div>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <div class="stat-item">
+            <div class="stat-value">{{ topClass }}</div>
+            <div class="stat-label">最常检测对象</div>
+          </div>
+        </el-col>
+      </el-row>
     </el-card>
   </div>
 </template>
@@ -94,42 +145,33 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
-import { ElMessage } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { UploadFilled, Download, Delete, Setting, DataAnalysis } from '@element-plus/icons-vue'
 
 const authStore = useAuthStore()
-
-const apiUrl = computed(() => {
-  return window.location.origin
-})
 
 const uploadHeaders = computed(() => ({
   Authorization: `Bearer ${localStorage.getItem('token')}`
 }))
 
 const results = ref<any[]>([])
-const historyVisible = ref(false)
 
 const beforeUpload = (file: any) => {
-  const isValid = [
-    'image/jpeg',
-    'image/png',
-    'image/gif',
-    'video/mp4',
-    'video/x-msvideo',
-    'video/quicktime',
-    'video/webm'
-  ].includes(file.type)
+  const validTypes = [
+    'image/jpeg', 'image/png', 'image/gif',
+    'video/mp4', 'video/x-msvideo', 'video/quicktime', 'video/webm'
+  ]
 
+  const isValid = validTypes.includes(file.type)
   const isLt200M = file.size / 1024 / 1024 < 200
 
   if (!isValid) {
-    ElMessage.error('仅支持 JPG/PNG/GIF 图片或 MP4/AVI/MOV/WebM 视频')
+    ElMessage.error('仅支持JPG/PNG/GIF图片或MP4/WebM视频')
     return false
   }
 
   if (!isLt200M) {
-    ElMessage.error('文件大小不能超过 200MB')
+    ElMessage.error('文件大小不能超过200MB')
     return false
   }
 
@@ -140,12 +182,11 @@ const onUploadSuccess = (response: any) => {
   if (response.success) {
     const result = {
       ...response,
-      timestamp: new Date().toLocaleString('zh-CN'),
-      error: null
+      timestamp: new Date().toISOString(),
+      processing: false
     }
     results.value.unshift(result)
     ElMessage.success('检测成功！')
-    historyVisible.value = true
   } else {
     ElMessage.error(response.message || '检测失败')
   }
@@ -153,7 +194,7 @@ const onUploadSuccess = (response: any) => {
 
 const onUploadError = (error: any) => {
   console.error('Upload error:', error)
-  ElMessage.error('上传失败，请重试')
+  ElMessage.error('上传失败，请检查网络连接')
 }
 
 const getConfidenceType = (confidence: number) => {
@@ -172,120 +213,258 @@ const downloadResult = (result: any) => {
   }
 }
 
+const deleteResult = async (index: number) => {
+  await ElMessageBox.confirm('确定删除此条检测记录？', '提示', {
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+    type: 'warning',
+  })
+  results.value.splice(index, 1)
+  ElMessage.success('已删除')
+}
+
+const clearResults = async () => {
+  await ElMessageBox.confirm('确定清空所有检测历史？', '提示', {
+    confirmButtonText: '清空',
+    cancelButtonText: '取消',
+    type: 'warning',
+  })
+  results.value = []
+  ElMessage.success('已清空')
+}
+
+const totalDetections = computed(() => {
+  return results.value.reduce((sum, r) => sum + (r.detections?.length || 0), 0)
+})
+
+const avgConfidence = computed(() => {
+  if (totalDetections.value === 0) return '0%'
+  const sum = results.value.reduce((acc, r) => {
+    if (!r.detections) return acc
+    return acc + r.detections.reduce((s: number, d: any) => s + (d.confidence || 0), 0)
+  }, 0)
+  return ((sum / totalDetections.value) * 100).toFixed(1) + '%'
+})
+
+const topClass = computed(() => {
+  const classes: Record<string, number> = {}
+  results.value.forEach(r => {
+    r.detections?.forEach((d: any) => {
+      classes[d.class] = (classes[d.class] || 0) + 1
+    })
+  })
+  const sorted = Object.entries(classes).sort((a, b) => b[1] - a[1])
+  return sorted.length > 0 ? sorted[0][0] : '无'
+})
+
 onMounted(() => {
-  // Load results from localStorage if available
   const saved = localStorage.getItem('detection_results')
   if (saved) {
     results.value = JSON.parse(saved)
-    if (results.value.length > 0) {
-      historyVisible.value = true
-    }
   }
 })
 
-// Save results to localStorage whenever they change
 watch(results, (newVal) => {
-  localStorage.setItem('detection_results', JSON.stringify(newVal.slice(0, 10)))
+  localStorage.setItem('detection_results', JSON.stringify(newVal.slice(0, 20)))
 }, { deep: true })
 </script>
 
 <style scoped>
 .detection-page {
+  padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 24px;
 }
 
-.upload-card {
-  border: 1px solid #e0e0e0;
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.upload-card h3 {
-  margin: 0 0 16px 0;
-  font-size: 18px;
-  color: #333;
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #7c3aed;
+}
+
+.upload-card {
+  background: linear-gradient(135deg, #fff 0%, #faf5ff 100%);
+  border: 2px dashed #d084d0;
 }
 
 .upload-area {
   width: 100%;
 }
 
-.results-container {
-  margin-top: 24px;
+.results-section {
+  animation: slideUp 0.4s ease;
 }
 
-.results-container h3 {
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 16px;
+  padding: 0 4px;
+}
+
+.section-header h3 {
+  margin: 0;
+  color: #7c3aed;
   font-size: 18px;
-  color: #333;
 }
 
 .results-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+  gap: 20px;
 }
 
 .result-card {
-  border: 1px solid #e0e0e0;
-  padding: 16px;
+  background: linear-gradient(135deg, #fff 0%, #faf5ff 100%);
+  border: 1px solid #ede5f5;
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.3s ease;
 }
 
-.image-container {
+.result-card:hover {
+  box-shadow: 0 8px 24px rgba(208, 132, 208, 0.15);
+  transform: translateY(-2px);
+}
+
+.processing-bar {
   margin-bottom: 16px;
-  border-radius: 4px;
+}
+
+.image-box {
+  position: relative;
+  border-radius: 8px;
   overflow: hidden;
+  margin-bottom: 16px;
   background: #f5f5f5;
 }
 
-.annotated-image {
+.detection-image {
   width: 100%;
   height: auto;
-  max-height: 400px;
-  object-fit: contain;
+  max-height: 300px;
+  object-fit: cover;
+  display: block;
 }
 
-.detections-section {
+.image-info {
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 12px;
+  color: #9380c5;
+}
+
+.yolo-section,
+.llm-section {
   margin-bottom: 16px;
 }
 
-.detections-section h4 {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-  color: #333;
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #7c3aed;
 }
 
-.detection-list {
+.section-title :deep(.el-icon) {
+  color: #d084d0;
+}
+
+.detection-items {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
 .detection-item {
-  flex-shrink: 0;
+  display: inline-block;
 }
 
-.description-section {
-  margin-bottom: 16px;
+.detection-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: linear-gradient(135deg, rgba(208, 132, 208, 0.1) 0%, rgba(167, 139, 219, 0.05) 100%);
 }
 
-.description-section h4 {
-  margin: 0 0 8px 0;
+.class-name {
+  font-weight: 600;
+}
+
+.confidence {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.llm-content {
+  padding: 12px;
+  background: #faf5ff;
+  border-left: 3px solid #d084d0;
+  border-radius: 4px;
   font-size: 14px;
-  color: #333;
+  color: #4b5563;
+  line-height: 1.6;
 }
 
-.error-section {
+.result-actions {
+  display: flex;
+  gap: 12px;
   margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #ede5f5;
 }
 
-.history-card {
-  margin-top: 24px;
+.stats-card {
+  background: linear-gradient(135deg, #fff 0%, #faf5ff 100%);
+  border: 1px solid #ede5f5;
 }
 
-.history-card h3 {
-  margin: 0 0 16px 0;
-  font-size: 18px;
-  color: #333;
+.stat-item {
+  text-align: center;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(208, 132, 208, 0.05);
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #7c3aed;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #9380c5;
+  margin-top: 4px;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .results-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

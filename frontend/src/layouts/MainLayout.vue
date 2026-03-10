@@ -178,13 +178,13 @@ const handleCommand = (command: string) => {
 .app-layout {
   display: flex;
   min-height: 100vh;
-  background: #f0f2f5;
+  background: #faf9fc;
 }
 
 /* ===== Sidebar ===== */
 .sidebar {
   width: 240px;
-  background: linear-gradient(180deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
+  background: linear-gradient(180deg, #f8f0ff 0%, #faf5ff 50%, #f5f0ff 100%);
   display: flex;
   flex-direction: column;
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -194,6 +194,7 @@ const handleCommand = (command: string) => {
   bottom: 0;
   z-index: 100;
   overflow: hidden;
+  border-right: 1px solid #ede5f5;
 }
 .sidebar.collapsed {
   width: 72px;
@@ -204,13 +205,13 @@ const handleCommand = (command: string) => {
   align-items: center;
   gap: 12px;
   padding: 20px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid #ede5f5;
 }
 .logo-icon {
   width: 40px;
   height: 40px;
   min-width: 40px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #d084d0 0%, #a78bdb 100%);
   border-radius: 10px;
   display: flex;
   align-items: center;
@@ -224,13 +225,13 @@ const handleCommand = (command: string) => {
 .logo-text h1 {
   font-size: 16px;
   font-weight: 700;
-  color: #fff;
+  color: #7c3aed;
   white-space: nowrap;
   line-height: 1.3;
 }
 .logo-text p {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  color: #a78bdb;
   white-space: nowrap;
 }
 
@@ -250,7 +251,7 @@ const handleCommand = (command: string) => {
   gap: 12px;
   padding: 12px 16px;
   border-radius: 10px;
-  color: rgba(255, 255, 255, 0.6);
+  color: #9380c5;
   text-decoration: none;
   transition: all 0.2s ease;
   position: relative;
@@ -258,13 +259,13 @@ const handleCommand = (command: string) => {
   white-space: nowrap;
 }
 .nav-item:hover {
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(255, 255, 255, 0.08);
+  color: #7c3aed;
+  background: rgba(208, 132, 208, 0.08);
 }
 .nav-item.active {
-  color: #fff;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.4) 0%, rgba(118, 75, 162, 0.3) 100%);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2);
+  color: #7c3aed;
+  background: linear-gradient(135deg, rgba(208, 132, 208, 0.15) 0%, rgba(167, 139, 219, 0.1) 100%);
+  box-shadow: 0 2px 8px rgba(208, 132, 208, 0.15);
 }
 .nav-item.active::before {
   content: '';
@@ -274,7 +275,7 @@ const handleCommand = (command: string) => {
   transform: translateY(-50%);
   width: 3px;
   height: 20px;
-  background: #667eea;
+  background: #d084d0;
   border-radius: 0 3px 3px 0;
 }
 
@@ -285,7 +286,7 @@ const handleCommand = (command: string) => {
 /* ===== Sidebar Footer ===== */
 .sidebar-footer {
   padding: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid #ede5f5;
 }
 .collapse-btn {
   display: flex;
@@ -294,13 +295,13 @@ const handleCommand = (command: string) => {
   width: 100%;
   height: 36px;
   border-radius: 8px;
-  color: rgba(255, 255, 255, 0.5);
+  color: #a78bdb;
   cursor: pointer;
   transition: all 0.2s;
 }
 .collapse-btn:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
+  color: #7c3aed;
+  background: rgba(208, 132, 208, 0.08);
 }
 
 /* ===== Main Area ===== */
@@ -319,12 +320,12 @@ const handleCommand = (command: string) => {
 /* ===== Top Bar ===== */
 .topbar {
   height: 64px;
-  background: #fff;
+  background: linear-gradient(90deg, #fff 0%, #faf5ff 100%);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 28px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 4px rgba(208, 132, 208, 0.08);
   position: sticky;
   top: 0;
   z-index: 50;
@@ -333,7 +334,7 @@ const handleCommand = (command: string) => {
 .page-title {
   font-size: 18px;
   font-weight: 600;
-  color: #1a1a2e;
+  color: #7c3aed;
 }
 
 .topbar-right {
@@ -380,7 +381,7 @@ const handleCommand = (command: string) => {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #d084d0 0%, #a78bdb 100%);
   color: white;
   display: flex;
   align-items: center;
