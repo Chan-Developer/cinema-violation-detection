@@ -306,15 +306,18 @@ const handleCommand = (command: string) => {
 
 /* ===== Main Area ===== */
 .main-area {
+  --sidebar-w: 240px;
   flex: 1;
-  margin-left: 240px;
+  margin-left: var(--sidebar-w);
+  width: calc(100vw - var(--sidebar-w));
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-width: 0;
   transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .sidebar.collapsed ~ .main-area {
-  margin-left: 72px;
+  --sidebar-w: 72px;
 }
 
 /* ===== Top Bar ===== */
@@ -411,6 +414,8 @@ const handleCommand = (command: string) => {
 .page-content {
   flex: 1;
   padding: 24px;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 /* ===== Transitions ===== */

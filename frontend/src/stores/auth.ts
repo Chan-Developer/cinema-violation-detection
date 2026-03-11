@@ -15,10 +15,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const http = axios.create({
     baseURL: API_BASE,
-    timeout: 30000,
-    headers: {
-      'Content-Type': 'application/json'
-    }
+    timeout: 30000
   })
 
   http.interceptors.request.use(config => {
