@@ -130,24 +130,11 @@ def detect_image():
         _, buffer = cv2.imencode('.jpg', annotated_frame)
         img_base64 = base64.b64encode(buffer).decode('utf-8')
 
-        # 尝试使用LLM获取分析结果
-        llm_description = None
-        try:
-            from utils.llm import call_llm_api
-            # 调用LLM分析标注图片（包含YOLO检测框）
-            print(f"调用 LLM API 分析标注图片...")
-            llm_description = call_llm_api(formatted_detections, img_base64)
-            print(f"✓ LLM 分析完成")
-        except Exception as e:
-            print(f"⚠️  LLM分析失败: {e}")
-            # 使用本地分析结果作为备选方案
-            try:
-                from utils.llm import generate_local_analysis
-                print(f"使用本地分析...")
-                llm_description = generate_local_analysis(formatted_detections)
-            except Exception as e2:
-                print(f"⚠️  本地分析失败: {e2}")
-                llm_description = '分析生成失败'
+        # 必须使用大模型分析；不允许降级到本地分析
+        from utils.llm import call_llm_api
+        print(f"调用 LLM API 分析标注图片...")
+        llm_description = call_llm_api(formatted_detections, img_base64)
+        print(f"✓ LLM 分析完成")
 
         # 清理
         if os.path.exists(filepath):
@@ -157,14 +144,15 @@ def detect_image():
             'success': True,
             'detections': formatted_detections,
             'annotated_image': f'data:image/jpeg;base64,{img_base64}',
-            'llm_description': llm_description or '暂无描述'
+            'llm_description': llm_description
         })
 
     except Exception as e:
         print(f"❌ 检测API错误: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'success': False, 'message': str(e)}), 500
+        # LLM 未成功时直接失败，避免返回本地固定模板文本
+        return jsonify({'success': False, 'message': str(e)}), 502
 
 
 @detect_bp.route('/detect/status/<int:camera_id>', methods=['GET'])

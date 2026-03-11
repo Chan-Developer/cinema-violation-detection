@@ -4,6 +4,14 @@ import base64
 import requests
 from openai import OpenAI
 
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if value is not None:
+        value = value.strip()
+    if value:
+        return value
+    raise RuntimeError(f"{name} 未配置，无法调用大模型")
+
 def get_llm_provider():
     """获取配置的LLM提供商"""
     return os.environ.get('LLM_PROVIDER', 'modelscope')
@@ -17,17 +25,38 @@ def encode_image_bytes(image_bytes):
     """将图片字节编码为base64"""
     return base64.b64encode(image_bytes).decode('utf-8')
 
-def call_openai(detections, base64_image):
-    """调用OpenAI API"""
-    client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
-
-    # 准备检测结果描述
+def build_prompt(detections):
+    """构建统一提示词，要求简洁、无表情、Markdown格式"""
     detection_text = "YOLO检测到的物体:\n"
     if detections:
         for d in detections:
             detection_text += f"- {d['class']}: 置信度 {d['confidence']:.2f}\n"
     else:
         detection_text += "- 未检测到明显物体\n"
+
+    prompt = f"""你是影院行为监管员。请观察图片（含检测框）并结合检测结果输出**简短**分析。
+
+【检测到的物体】
+{detection_text}
+
+要求：
+1. 输出为 Markdown。
+2. 不要使用任何表情符号。
+3. 内容简洁，总字数不超过120字。
+4. 使用以下固定结构（每行一条）：
+# 影院行为监管员报告
+- 抽烟行为：有/无（简述）
+- 拍照/录视频：有/无（简述）
+- 其他违规：有/无（简述）
+结论：一句话建议
+"""
+    return prompt
+
+def call_openai(detections, base64_image):
+    """调用OpenAI API"""
+    api_key = _require_env('OPENAI_API_KEY')
+    client = OpenAI(api_key=api_key)
+    prompt = build_prompt(detections)
 
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -37,19 +66,7 @@ def call_openai(detections, base64_image):
                 "content": [
                     {
                         "type": "text",
-                        "text": f"""你是一个影院行为监管员。请仔细观察这张图片，图片上有绿色检测框标注了检测到的人物。
-
-【检测到的物体】
-{detection_text}
-
-请基于图片内容详细描述你看到的情况。特别要关注：
-
-**重点检查项目：**
-- 🔴 **抽烟行为**：是否有人在抽烟？看有没有香烟、烟雾、烟灰、嘴部靠近烟源等迹象
-- 📸 **拍照/录视频**：是否有人举着手机、相机或其他录制设备？
-- 😤 **其他违规**：大声喧哗、躺卧、脚踩座位等不文明行为
-
-请根据观察结果，自由组织语言进行详细的描述分析。说出你看到的具体情况、发现的违规行为及其严重程度。"""
+                        "text": prompt
                     },
                     {
                         "type": "image_url",
@@ -60,21 +77,15 @@ def call_openai(detections, base64_image):
                 ]
             }
         ],
-        max_tokens=600
+        max_tokens=200
     )
 
     return response.choices[0].message.content
 
 def call_zhipu(detections, base64_image):
     """调用智谱AI API"""
-    api_key = os.environ.get('ZHIPU_API_KEY')
-
-    detection_text = "YOLO检测到的物体:\n"
-    if detections:
-        for d in detections:
-            detection_text += f"- {d['class']}: 置信度 {d['confidence']:.2f}\n"
-    else:
-        detection_text += "- 未检测到明显物体\n"
+    api_key = _require_env('ZHIPU_API_KEY')
+    prompt = build_prompt(detections)
 
     url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
     headers = {
@@ -90,19 +101,7 @@ def call_zhipu(detections, base64_image):
                 "content": [
                     {
                         "type": "text",
-                        "text": f"""你是一个影院行为监管员。请仔细观察这张图片，图片上有绿色检测框标注了检测到的人物。
-
-【检测到的物体】
-{detection_text}
-
-请基于图片内容详细描述你看到的情况。特别要关注：
-
-**重点检查项目：**
-- 🔴 **抽烟行为**：是否有人在抽烟？看有没有香烟、烟雾、烟灰、嘴部靠近烟源等迹象
-- 📸 **拍照/录视频**：是否有人举着手机、相机或其他录制设备？
-- 😤 **其他违规**：大声喧哗、躺卧、脚踩座位等不文明行为
-
-请根据观察结果，自由组织语言进行详细的描述分析。说出你看到的具体情况、发现的违规行为及其严重程度。"""
+                        "text": prompt
                     },
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
                 ]
@@ -117,14 +116,8 @@ def call_zhipu(detections, base64_image):
 
 def call_qwen(detections, base64_image):
     """调用通义千问API (DashScope)"""
-    api_key = os.environ.get('DASHSCOPE_API_KEY')
-
-    detection_text = "YOLO检测到的物体:\n"
-    if detections:
-        for d in detections:
-            detection_text += f"- {d['class']}: 置信度 {d['confidence']:.2f}\n"
-    else:
-        detection_text += "- 未检测到明显物体\n"
+    api_key = _require_env('DASHSCOPE_API_KEY')
+    prompt = build_prompt(detections)
 
     url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
     headers = {
@@ -140,19 +133,7 @@ def call_qwen(detections, base64_image):
                     "role": "user",
                     "content": [
                         {
-                            "text": f"""你是一个影院行为监管员。请仔细观察这张图片，图片上有绿色检测框标注了检测到的人物。
-
-【检测到的物体】
-{detection_text}
-
-请基于图片内容详细描述你看到的情况。特别要关注：
-
-**重点检查项目：**
-- 🔴 **抽烟行为**：是否有人在抽烟？看有没有香烟、烟雾、烟灰、嘴部靠近烟源等迹象
-- 📸 **拍照/录视频**：是否有人举着手机、相机或其他录制设备？
-- 😤 **其他违规**：大声喧哗、躺卧、脚踩座位等不文明行为
-
-请根据观察结果，自由组织语言进行详细的描述分析。说出你看到的具体情况、发现的违规行为及其严重程度。"""
+                            "text": prompt
                         },
                         {"image": f"data:image/jpeg;base64,{base64_image}"}
                     ]
@@ -168,20 +149,8 @@ def call_qwen(detections, base64_image):
 
 def call_modelscope(detections, base64_image):
     """调用ModelScope API (Qwen3-VL) - 分析标注图片"""
-    api_key = os.environ.get('MODELSCOPE_API_KEY')
-
-    # 如果没有API Key，返回本地分析结果
-    if not api_key:
-        print("⚠️  ModelScope API Key 未配置，使用本地分析")
-        return generate_local_analysis(detections)
-
-    # 准备检测结果描述
-    detection_text = "YOLO检测到的物体:\n"
-    if detections:
-        for d in detections:
-            detection_text += f"- {d['class']}: 置信度 {d['confidence']:.2f}\n"
-    else:
-        detection_text += "- 未检测到明显物体\n"
+    api_key = _require_env('MODELSCOPE_API_KEY')
+    prompt = build_prompt(detections)
 
     # 使用 OpenAI 兼容的 API
     client = OpenAI(
@@ -197,19 +166,7 @@ def call_modelscope(detections, base64_image):
                 'content': [
                     {
                         'type': 'text',
-                        'text': f"""你是一个影院行为监管员。请仔细观察这张图片，图片上有绿色检测框标注了检测到的人物。
-
-【检测到的物体】
-{detection_text}
-
-请基于图片内容详细描述你看到的情况。特别要关注：
-
-**重点检查项目：**
-- 🔴 **抽烟行为**：是否有人在抽烟？看有没有香烟、烟雾、烟灰、嘴部靠近烟源等迹象
-- 📸 **拍照/录视频**：是否有人举着手机、相机或其他录制设备？
-- 😤 **其他违规**：大声喧哗、躺卧、脚踩座位等不文明行为
-
-请根据观察结果，自由组织语言进行详细的描述分析。说出你看到的具体情况、发现的违规行为及其严重程度。""",
+                        'text': prompt,
                     },
                     {
                         'type': 'image_url',
@@ -220,16 +177,13 @@ def call_modelscope(detections, base64_image):
                 ],
             }],
             stream=False,
-            max_tokens=800
+            max_tokens=200
         )
 
         return response.choices[0].message.content
     except Exception as e:
-        print(f"❌ ModelScope API 调用失败: {e}")
-        import traceback
-        traceback.print_exc()
-        # 失败时返回本地分析结果
-        return generate_local_analysis(detections)
+        # 不降级到本地分析，直接抛出给上层处理
+        raise RuntimeError(f"ModelScope API 调用失败: {e}") from e
 
 
 def generate_local_description(detections):

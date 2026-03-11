@@ -11,8 +11,7 @@
 
       <el-upload
         drag
-        :action="`/api/detect`"
-        :headers="uploadHeaders"
+        :http-request="uploadRequest"
         :on-success="onUploadSuccess"
         :on-error="onUploadError"
         :before-upload="beforeUpload"
@@ -147,14 +146,27 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { UploadFilled, Download, Delete, Setting, DataAnalysis } from '@element-plus/icons-vue'
+import { getApiErrorMessage } from '../utils/error'
 
 const authStore = useAuthStore()
 
-const uploadHeaders = computed(() => ({
-  Authorization: `Bearer ${localStorage.getItem('token')}`
-}))
-
 const results = ref<any[]>([])
+
+const uploadRequest = async (options: any) => {
+  const formData = new FormData()
+  formData.append('file', options.file)
+
+  try {
+    // LLM 可能较慢，单独延长超时
+    const res = await authStore.api.post('/detect', formData, {
+      timeout: 180000,
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    options.onSuccess?.(res.data)
+  } catch (e: any) {
+    options.onError?.(e)
+  }
+}
 
 const beforeUpload = (file: any) => {
   const validTypes = [
@@ -194,7 +206,7 @@ const onUploadSuccess = (response: any) => {
 
 const onUploadError = (error: any) => {
   console.error('Upload error:', error)
-  ElMessage.error('上传失败，请检查网络连接')
+  ElMessage.error(getApiErrorMessage(error, '上传失败'))
 }
 
 const getConfidenceType = (confidence: number) => {
