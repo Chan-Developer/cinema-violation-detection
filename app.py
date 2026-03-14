@@ -4,6 +4,10 @@ eventlet.monkey_patch()
 import os
 import sys
 from dotenv import load_dotenv
+
+# Load .env before importing config so env values are applied.
+load_dotenv(override=True)
+
 import datetime
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_cors import CORS
@@ -12,7 +16,6 @@ from config import config
 from models import db, Role, User, Cinema, AlarmType, AlarmLevel
 
 # 加载 .env 环境变量（覆盖已存在的环境变量，避免旧值残留）
-load_dotenv(override=True)
 
 # 初始化扩展
 jwt = JWTManager()

@@ -36,7 +36,36 @@ YOLOv8提取人、物体位置 → 在图上画绿色检测框
 - MySQL 5.7+ 或 MySQL 8.0（推荐）
 - Node.js 14+（仅当需要修改前端时）
 
-### 方式一：一键启动（Linux/macOS）
+### 方式一：Windows + Conda（推荐）
+
+```powershell
+# 1. 创建独立 conda 环境
+conda create -y -n cinema python=3.11
+
+# 2. 安装依赖（不污染 base）
+conda run -n cinema python -m pip install -r requirements.txt
+conda run -n cinema python -m pip install cryptography
+
+# 3. 准备数据库（确保 MySQL 已启动）
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS cinema_detection CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+# 4. 配置 .env
+copy .env.example .env
+# 修改 DB_PASSWORD 为你的 MySQL 密码（例如 root）
+# 如遇本机访问问题可将 DB_HOST 改为 127.0.0.1
+
+# 5. 初始化数据库
+conda run -n cinema python init_db.py
+
+# 6. 启动服务
+conda run -n cinema python app.py
+```
+
+启动成功后访问：
+- `http://localhost:9500`
+- 如果浏览器访问 `localhost` 失败但进程已启动，请用局域网 IP 访问，例如 `http://192.168.1.2:9500`（可通过 `ipconfig` 查看 IPv4）。
+
+### 方式二：一键启动（Linux/macOS）
 
 ```bash
 cd project
@@ -46,7 +75,7 @@ chmod +x start.sh
 
 脚本会自动搞定：依赖安装、数据库初始化、应用启动。
 
-### 方式二：手动启动
+### 方式三：手动启动
 
 ```bash
 # 1. 安装依赖
@@ -100,7 +129,7 @@ LLM_PROVIDER=zhipu      # 智谱
 LLM_PROVIDER=qwen       # 通义千问
 ```
 
-不配置的话会自动用本地规则分析（但效果不如LLM）。
+注意：检测接口 `/api/detect` 强依赖 LLM。若未配置或 Token 无效，接口会返回 502。仅浏览页面不受影响。
 
 ## 项目结构简述
 
