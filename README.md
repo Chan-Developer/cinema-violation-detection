@@ -36,33 +36,48 @@ YOLOv8提取人、物体位置 → 在图上画绿色检测框
 - MySQL 5.7+ 或 MySQL 8.0（推荐）
 - Node.js 14+（仅当需要修改前端时）
 
-### 方式一：一键启动（Linux/macOS）
+### 方式一：通过 `.venv` 启动（推荐）
 
-```bash
-cd project
-chmod +x start.sh
-./start.sh
-```
+#### Windows（PowerShell）
+```powershell
+# 1. 创建并激活虚拟环境（首次执行）
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 
-脚本会自动搞定：依赖安装、数据库初始化、应用启动。
-
-### 方式二：手动启动
-
-```bash
-# 1. 安装依赖
+# 2. 安装依赖
 pip install -r requirements.txt
 
-# 2. 配置MySQL（需要先启动MySQL服务）
-mysql -u root -p
-> CREATE DATABASE cinema_detection CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-> EXIT;
+# 3. 初始化数据库（确保 MySQL 已启动）
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS cinema_detection CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-# 3. 编辑 .env 配置
+# 4. 配置环境变量
+Copy-Item .env.example .env
+# 按实际情况修改 DB_HOST/DB_USER/DB_PASSWORD
+
+# 5. 初始化并启动
+python init_db.py
+python app.py
+```
+
+#### Linux/macOS
+```bash
+# 1. 创建并激活虚拟环境（首次执行）
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 初始化数据库（确保 MySQL 已启动）
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS cinema_detection CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+# 4. 配置环境变量
 cp .env.example .env
-# 改一下DB_PASSWORD为你的MySQL密码
+# 按实际情况修改 DB_HOST/DB_USER/DB_PASSWORD
 
-# 4. 启动应用
-python3 app.py
+# 5. 初始化并启动
+python init_db.py
+python app.py
 ```
 
 启动成功后访问 **http://localhost:9500**
