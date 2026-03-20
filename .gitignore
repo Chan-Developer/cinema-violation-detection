@@ -35,12 +35,14 @@ wheels/
 
 # Frontend
 node_modules/
+frontend/node_modules/
 frontend/.env.local
 frontend/.dist/
 
 # Environment
 .env
 .env.local
+.venv/
 instance/
 *.db
 *.sqlite
