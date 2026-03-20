@@ -2,7 +2,16 @@ import os
 import json
 import base64
 import requests
-from openai import OpenAI
+
+
+def _get_openai_client():
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing dependency: openai. Run `pip install -r requirements.txt`."
+        ) from exc
+    return OpenAI
 
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
@@ -55,6 +64,7 @@ def build_prompt(detections):
 def call_openai(detections, base64_image):
     """调用OpenAI API"""
     api_key = _require_env('OPENAI_API_KEY')
+    OpenAI = _get_openai_client()
     client = OpenAI(api_key=api_key)
     prompt = build_prompt(detections)
 
@@ -153,6 +163,7 @@ def call_modelscope(detections, base64_image):
     prompt = build_prompt(detections)
 
     # 使用 OpenAI 兼容的 API
+    OpenAI = _get_openai_client()
     client = OpenAI(
         base_url='https://api-inference.modelscope.cn/v1',
         api_key=api_key,
