@@ -1,18 +1,39 @@
 import os
 from datetime import timedelta
+from urllib.parse import quote_plus
+from dotenv import load_dotenv
+
+
+# Always load project .env from repo root to avoid import-order/cwd issues.
+ENV_PATH = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(ENV_PATH, override=True)
+
+
+def _db_env(name: str, default: str) -> str:
+    value = os.environ.get(name, default)
+    return value.strip() if isinstance(value, str) else value
+
+
+def _build_db_uri() -> str:
+    host = _db_env('DB_HOST', '127.0.0.1')
+    port = _db_env('DB_PORT', '3306')
+    user = _db_env('DB_USER', 'cinema_user')
+    password = quote_plus(_db_env('DB_PASSWORD', 'cinema_pass123'))
+    db_name = _db_env('DB_NAME', 'cinema_detection')
+    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}?charset=utf8mb4"
 
 class Config:
     """基础配置"""
     SECRET_KEY = os.environ.get('SECRET_KEY', 'cinema-detection-secret-key-2024')
 
     # 数据库配置 (MySQL)
-    DB_HOST = os.environ.get('DB_HOST', 'localhost')
-    DB_PORT = os.environ.get('DB_PORT', 3306)
-    DB_USER = os.environ.get('DB_USER', 'root')
-    DB_PASSWORD = os.environ.get('DB_PASSWORD', 'root123')
-    DB_NAME = os.environ.get('DB_NAME', 'cinema_detection')
+    DB_HOST = _db_env('DB_HOST', '127.0.0.1')
+    DB_PORT = _db_env('DB_PORT', '3306')
+    DB_USER = _db_env('DB_USER', 'cinema_user')
+    DB_PASSWORD = _db_env('DB_PASSWORD', 'cinema_pass123')
+    DB_NAME = _db_env('DB_NAME', 'cinema_detection')
 
-    SQLALCHEMY_DATABASE_URI = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+    SQLALCHEMY_DATABASE_URI = _build_db_uri()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False
     
