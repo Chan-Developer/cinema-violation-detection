@@ -13,6 +13,8 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+!frontend/dist/
+!frontend/dist/**
 downloads/
 eggs/
 .eggs/
@@ -49,3 +51,7 @@ instance/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime evidence files
+static/alarms/
+static/uploads/

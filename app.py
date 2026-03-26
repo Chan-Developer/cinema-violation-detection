@@ -73,6 +73,16 @@ def register_routes(app):
             return jsonify({'success': True, 'message': '数据初始化成功'})
         except Exception as e:
             return jsonify({'success': False, 'message': str(e)}), 500
+
+    @app.route('/static/alarms/<path:filename>')
+    def serve_alarm_images(filename):
+        """提供告警证据图片访问"""
+        return send_from_directory(os.path.join(os.path.dirname(__file__), 'static', 'alarms'), filename)
+
+    @app.route('/static/uploads/<path:filename>')
+    def serve_upload_files(filename):
+        """提供上传原始文件访问（用于留痕复盘）"""
+        return send_from_directory(os.path.join(os.path.dirname(__file__), 'static', 'uploads'), filename)
     
     @app.route('/<path:path>')
     def serve_spa(path):

@@ -1,331 +1,332 @@
 <template>
-  <div class="monitor">
-    <div class="monitor-toolbar">
-      <el-select v-model="selectedCinema" placeholder="选择影院" clearable @change="loadCameras" style="width: 220px">
-        <el-option v-for="c in cinemas" :key="c.id" :label="c.name" :value="c.id" />
-      </el-select>
-    </div>
+  <div class="video-monitor">
+    <el-card class="upload-card">
+      <template #header>
+        <div class="header-row">
+          <span class="title">视频识别监控（上传视频代替摄像头）</span>
+          <el-tag type="danger" effect="light" round>
+            待处理告警 {{ authStore.pendingAlarmCount }}
+          </el-tag>
+        </div>
+      </template>
 
-    <div class="monitor-body">
-      <!-- 摄像头列表 -->
-      <div class="camera-panel">
-        <div class="panel-head">
-          <span>摄像头列表</span>
-          <el-tag size="small" round>{{ cameras.length }} 台</el-tag>
-        </div>
-        <div class="camera-list">
-          <div
-            v-for="cam in cameras"
-            :key="cam.id"
-            class="camera-item"
-            :class="{ active: selectedCamera?.id === cam.id }"
-            @click="selectCamera(cam)"
-          >
-            <div class="cam-indicator" :class="cam.stream_status === 1 ? 'online' : 'offline'"></div>
-            <div class="cam-info">
-              <div class="cam-name">{{ cam.name }}</div>
-              <div class="cam-meta">{{ cam.position || '未设置位置' }}</div>
-            </div>
-            <el-tag :type="cam.stream_status === 1 ? 'success' : 'info'" size="small" effect="plain" round>
-              {{ cam.stream_status === 1 ? '推流中' : '离线' }}
-            </el-tag>
-          </div>
-          <el-empty v-if="cameras.length === 0" description="暂无摄像头" :image-size="60" />
-        </div>
+      <div class="toolbar">
+        <el-form inline>
+          <el-form-item label="采样间隔">
+            <el-input-number v-model="frameInterval" :min="1" :max="300" :step="1" />
+            <span class="hint">每 {{ frameInterval }} 帧检测一次</span>
+          </el-form-item>
+          <el-form-item label="检测类型">
+            <el-checkbox-group v-model="detectionTypes">
+              <el-checkbox label="photo">盗摄</el-checkbox>
+              <el-checkbox label="smoke">吸烟</el-checkbox>
+              <el-checkbox label="crowd">拥堵</el-checkbox>
+              <el-checkbox label="walk">走动</el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+        </el-form>
       </div>
 
-      <!-- 视频播放区 -->
-      <div class="video-panel">
-        <template v-if="!selectedCamera">
-          <div class="empty-video">
-            <el-icon :size="64" color="#ddd"><VideoCamera /></el-icon>
-            <p>请从左侧选择一个摄像头</p>
-          </div>
+      <el-upload
+        drag
+        :http-request="uploadVideo"
+        :before-upload="beforeUpload"
+        accept=".mp4,.avi,.mov,.mkv,.webm"
+        :show-file-list="false"
+        class="upload-area"
+      >
+        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+        <div class="el-upload__text">点击或拖拽上传视频进行识别</div>
+        <template #tip>
+          <div class="el-upload__tip">视频上传后会自动检测并产生日志与告警</div>
         </template>
-        <template v-else>
-          <div class="video-head">
+      </el-upload>
+    </el-card>
+
+    <el-card>
+      <template #header>
+        <div class="header-row">
+          <span class="title">检测任务</span>
+          <el-button type="primary" text @click="$router.push('/alarms')">查看告警列表</el-button>
+        </div>
+      </template>
+
+      <el-empty v-if="tasks.length === 0" description="暂无任务，先上传一个视频吧" />
+
+      <div v-else class="task-list">
+        <el-card v-for="task in tasks" :key="task.task_id" class="task-item" shadow="never">
+          <div class="task-head">
             <div>
-              <h3>{{ selectedCamera.name }}</h3>
-              <span class="video-sub">{{ selectedCamera.position }} &middot; {{ selectedCamera.hall_name || '未分配影厅' }}</span>
+              <div class="task-name">{{ task.file_name || task.task_id }}</div>
+              <div class="task-meta">任务ID: {{ task.task_id }}</div>
             </div>
-            <div class="video-actions">
-              <el-button
-                :type="selectedCamera.stream_status === 1 ? 'danger' : 'primary'"
-                size="small"
-                round
-                @click="toggleStream"
-              >
-                <el-icon><VideoPlay v-if="selectedCamera.stream_status !== 1" /><VideoPause v-else /></el-icon>
-                {{ selectedCamera.stream_status === 1 ? '停止推流' : '开始推流' }}
-              </el-button>
-              <el-button
-                type="success"
-                size="small"
-                round
-                @click="startDetection"
-                :disabled="selectedCamera.stream_status !== 1"
-              >
-                <el-icon><View /></el-icon>
-                开始检测
-              </el-button>
-            </div>
+            <el-tag :type="statusTag(task.status)" round>{{ statusText(task.status) }}</el-tag>
           </div>
-          <div class="video-player">
-            <img v-if="currentFrame" :src="currentFrame" alt="视频流" />
-            <div v-else class="no-stream">
-              <el-icon :size="80" color="rgba(255,255,255,0.2)"><VideoCamera /></el-icon>
-              <p>视频流未启动</p>
-            </div>
+
+          <el-progress
+            :percentage="task.progress || 0"
+            :status="task.status === 'failed' ? 'exception' : task.status === 'completed' ? 'success' : ''"
+          />
+
+          <div class="task-stats">
+            <span>已处理帧: {{ task.processed_frames || 0 }}</span>
+            <span>采样帧: {{ task.sampled_frames || 0 }}</span>
+            <span>告警数: {{ task.alarms_created || 0 }}</span>
           </div>
-          <!-- 检测结果 -->
-          <div class="detection-list" v-if="detectionResults.length > 0">
-            <el-alert
-              v-for="(result, idx) in detectionResults"
-              :key="idx"
-              :title="getDetectionLabel(result.type)"
-              :type="getDetectionAlertType(result.type)"
-              :description="`置信度: ${(result.confidence * 100).toFixed(1)}%`"
-              show-icon
-              :closable="false"
-            />
+
+          <div v-if="task.summary" class="summary">{{ task.summary }}</div>
+          <div v-if="task.message && task.status === 'failed'" class="error">{{ task.message }}</div>
+
+          <div v-if="task.samples && task.samples.length > 0" class="samples">
+            <a
+              v-for="(sample, index) in task.samples.slice(0, 10)"
+              :key="index"
+              :href="normalizeMediaUrl(sample.image_url)"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="sample-link"
+            >
+              帧 {{ sample.frame_index }}
+            </a>
           </div>
-        </template>
+        </el-card>
       </div>
-    </div>
+    </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useAuthStore } from '../stores/auth'
 import { ElMessage } from 'element-plus'
-import { io } from 'socket.io-client'
+import { UploadFilled } from '@element-plus/icons-vue'
+import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
 
-const cinemas = ref<any[]>([])
-const cameras = ref<any[]>([])
-const selectedCinema = ref<number | null>(null)
-const selectedCamera = ref<any>(null)
-const currentFrame = ref('')
-const detectionResults = ref<any[]>([])
+const frameInterval = ref(90)
+const detectionTypes = ref(['photo', 'smoke', 'crowd', 'walk'])
+const tasks = ref<any[]>([])
+const pollTimers = new Map<string, number>()
 
-let socket: any = null
-let frameTimer: number | null = null
+const apiOrigin = (import.meta.env.VITE_API_BASE || 'http://localhost:9500/api').replace(/\/api\/?$/, '')
 
-const loadCinemas = async () => {
+const normalizeMediaUrl = (url: string) => {
+  if (!url) return url
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url
+  return `${apiOrigin}${url}`
+}
+
+const beforeUpload = (file: any) => {
+  const allowed = [
+    'video/mp4', 'video/x-msvideo', 'video/quicktime', 'video/webm', 'video/x-matroska'
+  ]
+  if (!allowed.includes(file.type)) {
+    ElMessage.error('仅支持 MP4/AVI/MOV/MKV/WEBM 视频')
+    return false
+  }
+
+  const isLt200M = file.size / 1024 / 1024 < 200
+  if (!isLt200M) {
+    ElMessage.error('文件大小不能超过200MB')
+    return false
+  }
+  return true
+}
+
+const uploadVideo = async (options: any) => {
+  const formData = new FormData()
+  formData.append('file', options.file)
+  formData.append('frame_interval', String(frameInterval.value || 90))
+  formData.append('detection_types', detectionTypes.value.join(','))
+
   try {
-    const res = await authStore.api.get('/cinemas?per_page=100')
-    if (res.data.success) {
-      cinemas.value = res.data.cinemas
-      if (cinemas.value.length > 0 && !selectedCinema.value) {
-        selectedCinema.value = cinemas.value[0].id
-        loadCameras()
-      }
+    const res = await authStore.api.post('/detect/video', formData, {
+      timeout: 180000,
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+
+    if (!res.data.success) throw new Error(res.data.message || '任务创建失败')
+
+    const task = {
+      task_id: res.data.task_id,
+      file_name: options.file?.name,
+      status: 'pending',
+      progress: 0,
+      processed_frames: 0,
+      sampled_frames: 0,
+      alarms_created: 0,
+      samples: []
     }
-  } catch (e) {
-    console.error('获取影院失败', e)
-  }
-}
 
-const loadCameras = async () => {
-  if (!selectedCinema.value) { cameras.value = []; return }
-  try {
-    const res = await authStore.api.get(`/cameras?cinema_id=${selectedCinema.value}&per_page=100`)
-    if (res.data.success) cameras.value = res.data.cameras
-  } catch (e) {
-    console.error('获取摄像头失败', e)
-  }
-}
-
-const selectCamera = (cam: any) => {
-  selectedCamera.value = cam
-  detectionResults.value = []
-  currentFrame.value = ''
-  if (frameTimer) { clearInterval(frameTimer); frameTimer = null }
-  if (cam.stream_status === 1) {
-    fetchFrame()
-    frameTimer = window.setInterval(fetchFrame, 1000)
-  }
-}
-
-const fetchFrame = async () => {
-  if (!selectedCamera.value) return
-  try {
-    const res = await authStore.api.get(`/streams/${selectedCamera.value.id}/frame`)
-    if (res.data.success && res.data.frame) currentFrame.value = res.data.frame
-  } catch (_e) { /* ignore */ }
-}
-
-const toggleStream = async () => {
-  if (!selectedCamera.value) return
-  const action = selectedCamera.value.stream_status === 1 ? 'stop' : 'start'
-  try {
-    const res = await authStore.api.post(`/streams/${selectedCamera.value.id}/${action}`)
-    ElMessage.success(res.data.message)
-    loadCameras()
+    tasks.value.unshift(task)
+    startPolling(task.task_id)
+    ElMessage.success('视频任务已创建，开始检测')
+    options.onSuccess?.(res.data)
   } catch (e: any) {
-    ElMessage.error(e.response?.data?.message || '操作失败')
+    options.onError?.(e)
+    ElMessage.error(e?.response?.data?.message || e?.message || '上传失败')
   }
 }
 
-const startDetection = () => { ElMessage.info('检测功能已启动') }
-
-const getDetectionLabel = (type: string) =>
-  ({ photo: '盗摄检测', smoke: '吸烟检测', crowd: '拥堵检测', walk: '随意走动' } as Record<string, string>)[type] || type
-
-const getDetectionAlertType = (type: string) =>
-  ({ photo: 'warning', smoke: 'error', crowd: 'warning', walk: 'info' } as Record<string, string>)[type] || 'info'
-
-const initSocket = () => {
-  socket = io('http://localhost:9500', { transports: ['websocket'] })
-  socket.on('connect', () => {
-    const user = authStore.user
-    if (user) {
-      socket.emit('authenticate', {
-        user_id: user.id, username: user.username,
-        role: user.role, cinema_id: user.cinema_id
-      })
-    }
-  })
-  socket.on('detection_result', (data: any) => {
-    if (selectedCamera.value && data.camera_id === selectedCamera.value.id) {
-      detectionResults.value = data.result?.results || []
-    }
-  })
-  socket.on('new_alarm', (data: any) => {
-    ElMessage.warning(`新报警: ${data.title}`)
-    authStore.fetchPendingAlarms()
-  })
+const updateTask = (taskId: string, taskData: any) => {
+  const idx = tasks.value.findIndex(t => t.task_id === taskId)
+  if (idx < 0) return
+  tasks.value[idx] = {
+    ...tasks.value[idx],
+    ...taskData
+  }
 }
 
-onMounted(() => { loadCinemas(); initSocket() })
+const startPolling = (taskId: string) => {
+  const timer = window.setInterval(async () => {
+    try {
+      const res = await authStore.api.get(`/detect/video/tasks/${taskId}`)
+      if (!res.data.success) return
+
+      const task = res.data.task
+      updateTask(taskId, task)
+
+      if (task.status === 'completed' || task.status === 'failed') {
+        clearPolling(taskId)
+        authStore.fetchPendingAlarms()
+      }
+    } catch (_e) {
+      // 网络抖动忽略单次错误
+    }
+  }, 1500)
+
+  pollTimers.set(taskId, timer)
+}
+
+const clearPolling = (taskId: string) => {
+  const timer = pollTimers.get(taskId)
+  if (timer) {
+    clearInterval(timer)
+    pollTimers.delete(taskId)
+  }
+}
+
+const statusText = (status: string) => {
+  const map: Record<string, string> = {
+    pending: '排队中',
+    running: '识别中',
+    completed: '已完成',
+    failed: '失败'
+  }
+  return map[status] || status
+}
+
+const statusTag = (status: string) => {
+  const map: Record<string, string> = {
+    pending: 'info',
+    running: 'warning',
+    completed: 'success',
+    failed: 'danger'
+  }
+  return map[status] || 'info'
+}
+
+onMounted(() => {
+  authStore.fetchPendingAlarms()
+})
+
 onUnmounted(() => {
-  if (frameTimer) clearInterval(frameTimer)
-  if (socket) socket.disconnect()
+  pollTimers.forEach((timer) => clearInterval(timer))
+  pollTimers.clear()
 })
 </script>
 
 <style scoped>
-.monitor {
+.video-monitor {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  height: calc(100vh - 64px - 48px);
 }
 
-.monitor-toolbar {
+.header-row {
   display: flex;
   align-items: center;
-}
-
-.monitor-body {
-  flex: 1;
-  display: flex;
-  gap: 20px;
-  min-height: 0;
-}
-
-/* Camera Panel */
-.camera-panel {
-  width: 300px;
-  min-width: 300px;
-  background: #fff;
-  border-radius: 14px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-.panel-head {
-  display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 16px 18px;
-  border-bottom: 1px solid #f0f0f0;
+}
+
+.title {
   font-weight: 600;
   color: #333;
-  font-size: 14px;
-}
-.camera-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
-.camera-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.camera-item:hover { background: #f7f8fa; }
-.camera-item.active {
-  background: linear-gradient(135deg, rgba(102,126,234,0.08), rgba(118,75,162,0.06));
-  box-shadow: inset 3px 0 0 #667eea;
 }
 
-.cam-indicator {
-  width: 8px; height: 8px; min-width: 8px;
-  border-radius: 50%;
+.toolbar {
+  margin-bottom: 12px;
 }
-.cam-indicator.online { background: #52c41a; box-shadow: 0 0 6px rgba(82, 196, 26, 0.4); }
-.cam-indicator.offline { background: #d9d9d9; }
 
-.cam-info { flex: 1; min-width: 0; }
-.cam-name { font-size: 13px; font-weight: 500; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cam-meta { font-size: 11px; color: #bbb; margin-top: 2px; }
+.hint {
+  margin-left: 8px;
+  color: #999;
+  font-size: 12px;
+}
 
-/* Video Panel */
-.video-panel {
-  flex: 1;
-  background: #fff;
-  border-radius: 14px;
+.task-list {
   display: flex;
   flex-direction: column;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  overflow: hidden;
-}
-.empty-video {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   gap: 12px;
-  color: #ccc;
 }
-.empty-video p { font-size: 14px; }
 
-.video-head {
+.task-item {
+  border: 1px solid #f0f0f0;
+}
+
+.task-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 10px;
 }
-.video-head h3 { font-size: 15px; font-weight: 600; color: #333; margin: 0; }
-.video-sub { font-size: 12px; color: #bbb; }
-.video-actions { display: flex; gap: 8px; }
 
-.video-player {
-  flex: 1;
-  background: #111;
+.task-name {
+  font-weight: 600;
+  color: #222;
+}
+
+.task-meta {
+  font-size: 12px;
+  color: #999;
+}
+
+.task-stats {
+  margin-top: 10px;
   display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #666;
+}
+
+.summary {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #333;
+}
+
+.error {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #f56c6c;
+}
+
+.samples {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sample-link {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 400px;
-}
-.video-player img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.no-stream { text-align: center; color: rgba(255, 255, 255, 0.3); }
-.no-stream p { margin-top: 8px; font-size: 14px; }
-
-.detection-list {
-  padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-top: 1px solid #f0f0f0;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  text-decoration: none;
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.08);
 }
 </style>

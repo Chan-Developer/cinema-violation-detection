@@ -1,6 +1,9 @@
 from flask import Blueprint, request, jsonify, g
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
-from models import db, Cinema, Hall, Camera, Alarm, AlarmType, AlarmLevel, User
+from models import (
+    db, Cinema, Hall, Camera, Alarm, AlarmType, AlarmLevel, User,
+    ALARM_STATUS_PENDING, ALARM_STATUS_CONFIRMED, ALARM_STATUS_PROCESSING
+)
 from datetime import datetime, timedelta
 from sqlalchemy import func
 
@@ -33,7 +36,9 @@ def get_overview():
     alarm_query = Alarm.query.filter(Alarm.occurred_at >= today_start)
     
     today_alarms = alarm_query.count()
-    pending_alarms = alarm_query.filter_by(status=0).count()
+    pending_alarms = alarm_query.filter(
+        Alarm.status.in_([ALARM_STATUS_PENDING, ALARM_STATUS_CONFIRMED, ALARM_STATUS_PROCESSING])
+    ).count()
     
     # 今日报警类型分布
     alarm_by_type = db.session.query(
@@ -99,7 +104,9 @@ def get_cinema_dashboard(cinema_id):
     )
     
     today_alarms = alarm_query.count()
-    pending_alarms = alarm_query.filter_by(status=0).count()
+    pending_alarms = alarm_query.filter(
+        Alarm.status.in_([ALARM_STATUS_PENDING, ALARM_STATUS_CONFIRMED, ALARM_STATUS_PROCESSING])
+    ).count()
     
     # 各影厅报警统计
     hall_alarms = db.session.query(

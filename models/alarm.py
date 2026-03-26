@@ -1,6 +1,20 @@
 from . import db
 from datetime import datetime
 
+ALARM_STATUS_PENDING = 0
+ALARM_STATUS_CONFIRMED = 1
+ALARM_STATUS_PROCESSING = 2
+ALARM_STATUS_RESOLVED = 3
+ALARM_STATUS_IGNORED = 4
+
+ALARM_STATUS_TEXT = {
+    ALARM_STATUS_PENDING: '待处理',
+    ALARM_STATUS_CONFIRMED: '已确认',
+    ALARM_STATUS_PROCESSING: '处理中',
+    ALARM_STATUS_RESOLVED: '已处理',
+    ALARM_STATUS_IGNORED: '已忽略',
+}
+
 class AlarmType(db.Model):
     """报警类型表"""
     __tablename__ = 'alarm_types'
@@ -83,7 +97,7 @@ class Alarm(db.Model):
     confidence = db.Column(db.Float)  # 置信度
     
     # 状态
-    status = db.Column(db.Integer, default=0)  # 0: 待处理, 1: 已确认, 2: 已处理, 3: 已忽略
+    status = db.Column(db.Integer, default=ALARM_STATUS_PENDING)  # 0: 待处理, 1: 已确认, 2: 处理中, 3: 已处理, 4: 已忽略
     handler_id = db.Column(db.Integer, db.ForeignKey('users.id'))  # 处理人
     handler_note = db.Column(db.Text)  # 处理备注
     
@@ -100,6 +114,7 @@ class Alarm(db.Model):
     level = db.relationship('AlarmLevel')
     handler = db.relationship('User')
     notifications = db.relationship('AlarmNotification', back_populates='alarm', lazy='dynamic', cascade='all, delete-orphan')
+    action_logs = db.relationship('AlarmActionLog', back_populates='alarm', lazy='dynamic', cascade='all, delete-orphan')
     
     def to_dict(self, include_relations=False):
         data = {
@@ -122,7 +137,7 @@ class Alarm(db.Model):
             'detection_box': self.detection_box,
             'confidence': self.confidence,
             'status': self.status,
-            'status_text': ['待处理', '已确认', '已处理', '已忽略'][self.status] if self.status < 4 else '未知',
+            'status_text': ALARM_STATUS_TEXT.get(self.status, '未知'),
             'handler_id': self.handler_id,
             'handler_name': self.handler.real_name if self.handler else None,
             'handler_note': self.handler_note,
@@ -132,6 +147,39 @@ class Alarm(db.Model):
             'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S')
         }
         return data
+
+
+class AlarmActionLog(db.Model):
+    """报警操作留痕"""
+    __tablename__ = 'alarm_action_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    alarm_id = db.Column(db.Integer, db.ForeignKey('alarms.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    action = db.Column(db.String(50), nullable=False)  # created, confirm, process, resolve, ignore
+    from_status = db.Column(db.Integer)
+    to_status = db.Column(db.Integer)
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    # 关系
+    alarm = db.relationship('Alarm', back_populates='action_logs')
+    user = db.relationship('User')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'alarm_id': self.alarm_id,
+            'user_id': self.user_id,
+            'user_name': self.user.real_name if self.user else None,
+            'action': self.action,
+            'from_status': self.from_status,
+            'from_status_text': ALARM_STATUS_TEXT.get(self.from_status) if self.from_status is not None else None,
+            'to_status': self.to_status,
+            'to_status_text': ALARM_STATUS_TEXT.get(self.to_status) if self.to_status is not None else None,
+            'note': self.note,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None
+        }
 
 
 class AlarmNotification(db.Model):

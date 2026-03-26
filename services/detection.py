@@ -6,7 +6,10 @@ import os
 from datetime import datetime
 from services.websocket import socketio, emit_detection_result, emit_alarm
 from services.video_stream import stream_manager
-from models import db, Camera, Alarm, AlarmType, AlarmLevel
+from models import (
+    db, Camera, Alarm, AlarmType, AlarmLevel, AlarmActionLog,
+    ALARM_STATUS_PENDING
+)
 
 # YOLO 导入
 try:
@@ -301,13 +304,24 @@ class DetectionWorker(threading.Thread):
                 image_url=image_url,
                 detection_box=','.join(map(str, result['box'])),
                 confidence=confidence,
+                status=ALARM_STATUS_PENDING,
                 occurred_at=datetime.now()
             )
             db.session.add(alarm)
             db.session.commit()
+
+            db.session.add(AlarmActionLog(
+                alarm_id=alarm.id,
+                user_id=None,
+                action='created',
+                from_status=None,
+                to_status=ALARM_STATUS_PENDING,
+                note=f'自动检测创建告警，类型={alarm_type.code}'
+            ))
+            db.session.commit()
             
             # 推送报警
-            emit_alarm(alarm.to_dict(), target_roles=['admin', 'operator'], target_cinema_id=camera.cinema_id)
+            emit_alarm(alarm.to_dict(), target_roles=['admin', 'operator', 'manager'], target_cinema_id=camera.cinema_id)
     
     def _save_detection_image(self, frame, result):
         """保存检测图片"""

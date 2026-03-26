@@ -1,6 +1,10 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
-from models import db, Alarm, AlarmType, AlarmLevel, Camera, AlarmNotification
+from models import (
+    db, Alarm, AlarmType, AlarmLevel, Camera, AlarmNotification, AlarmActionLog,
+    ALARM_STATUS_PENDING, ALARM_STATUS_CONFIRMED, ALARM_STATUS_PROCESSING,
+    ALARM_STATUS_RESOLVED, ALARM_STATUS_IGNORED
+)
 from datetime import datetime, timedelta
 
 alarm_bp = Blueprint('alarm', __name__)
@@ -11,6 +15,19 @@ def get_current_user_info():
     user_id = int(get_jwt_identity())
     claims = get_jwt()
     return user_id, claims
+
+
+def add_action_log(alarm_id, action, user_id=None, from_status=None, to_status=None, note=''):
+    """记录报警状态流转留痕"""
+    log = AlarmActionLog(
+        alarm_id=alarm_id,
+        user_id=user_id,
+        action=action,
+        from_status=from_status,
+        to_status=to_status,
+        note=note
+    )
+    db.session.add(log)
 
 
 @alarm_bp.route('', methods=['GET'])
@@ -89,16 +106,49 @@ def confirm_alarm(alarm_id):
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
 
-    if alarm.status != 0:
+    if alarm.status != ALARM_STATUS_PENDING:
         return jsonify({'success': False, 'message': '报警已被处理'}), 400
 
-    alarm.status = 1  # 已确认
+    from_status = alarm.status
+    alarm.status = ALARM_STATUS_CONFIRMED
     alarm.handler_id = user_id
     alarm.confirmed_at = datetime.now()
+    add_action_log(
+        alarm.id, 'confirm', user_id=user_id,
+        from_status=from_status, to_status=alarm.status, note='报警已确认'
+    )
 
     db.session.commit()
 
     return jsonify({'success': True, 'message': '报警已确认', 'alarm': alarm.to_dict()})
+
+
+@alarm_bp.route('/<int:alarm_id>/process', methods=['POST'])
+@jwt_required()
+def process_alarm(alarm_id):
+    """进入处理中"""
+    user_id, _ = get_current_user_info()
+
+    alarm = Alarm.query.get(alarm_id)
+    if not alarm:
+        return jsonify({'success': False, 'message': '报警不存在'}), 404
+
+    if alarm.status != ALARM_STATUS_CONFIRMED:
+        return jsonify({'success': False, 'message': '仅已确认报警可进入处理中'}), 400
+
+    data = request.get_json(silent=True) or {}
+    from_status = alarm.status
+    alarm.status = ALARM_STATUS_PROCESSING
+    alarm.handler_id = user_id
+    alarm.handler_note = data.get('note', alarm.handler_note)
+    add_action_log(
+        alarm.id, 'process', user_id=user_id,
+        from_status=from_status, to_status=alarm.status, note=data.get('note', '进入处理中')
+    )
+
+    db.session.commit()
+
+    return jsonify({'success': True, 'message': '报警处理中', 'alarm': alarm.to_dict()})
 
 
 @alarm_bp.route('/<int:alarm_id>/resolve', methods=['POST'])
@@ -111,12 +161,20 @@ def resolve_alarm(alarm_id):
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
 
+    if alarm.status not in [ALARM_STATUS_CONFIRMED, ALARM_STATUS_PROCESSING]:
+        return jsonify({'success': False, 'message': '仅已确认/处理中报警可处理完成'}), 400
+
     data = request.get_json(silent=True) or {}
 
-    alarm.status = 2  # 已处理
+    from_status = alarm.status
+    alarm.status = ALARM_STATUS_RESOLVED
     alarm.handler_id = user_id
     alarm.handler_note = data.get('note', '')
     alarm.resolved_at = datetime.now()
+    add_action_log(
+        alarm.id, 'resolve', user_id=user_id,
+        from_status=from_status, to_status=alarm.status, note=data.get('note', '报警已处理')
+    )
 
     db.session.commit()
 
@@ -133,16 +191,36 @@ def ignore_alarm(alarm_id):
     if not alarm:
         return jsonify({'success': False, 'message': '报警不存在'}), 404
 
+    if alarm.status in [ALARM_STATUS_RESOLVED, ALARM_STATUS_IGNORED]:
+        return jsonify({'success': False, 'message': '报警已结束，无法忽略'}), 400
+
     data = request.get_json(silent=True) or {}
 
-    alarm.status = 3  # 已忽略
+    from_status = alarm.status
+    alarm.status = ALARM_STATUS_IGNORED
     alarm.handler_id = user_id
     alarm.handler_note = data.get('note', '忽略')
     alarm.resolved_at = datetime.now()
+    add_action_log(
+        alarm.id, 'ignore', user_id=user_id,
+        from_status=from_status, to_status=alarm.status, note=alarm.handler_note
+    )
 
     db.session.commit()
 
     return jsonify({'success': True, 'message': '报警已忽略', 'alarm': alarm.to_dict()})
+
+
+@alarm_bp.route('/<int:alarm_id>/logs', methods=['GET'])
+@jwt_required()
+def get_alarm_logs(alarm_id):
+    """获取报警留痕日志"""
+    alarm = Alarm.query.get(alarm_id)
+    if not alarm:
+        return jsonify({'success': False, 'message': '报警不存在'}), 404
+
+    logs = alarm.action_logs.order_by(AlarmActionLog.created_at.asc()).all()
+    return jsonify({'success': True, 'logs': [log.to_dict() for log in logs]})
 
 
 @alarm_bp.route('/statistics', methods=['GET'])
@@ -169,10 +247,11 @@ def get_alarm_statistics():
     
     # 总体统计
     total = query.count()
-    pending = query.filter_by(status=0).count()
-    confirmed = query.filter_by(status=1).count()
-    resolved = query.filter_by(status=2).count()
-    ignored = query.filter_by(status=3).count()
+    pending = query.filter_by(status=ALARM_STATUS_PENDING).count()
+    confirmed = query.filter_by(status=ALARM_STATUS_CONFIRMED).count()
+    processing = query.filter_by(status=ALARM_STATUS_PROCESSING).count()
+    resolved = query.filter_by(status=ALARM_STATUS_RESOLVED).count()
+    ignored = query.filter_by(status=ALARM_STATUS_IGNORED).count()
     
     # 按类型统计
     type_stats = db.session.query(
@@ -207,6 +286,7 @@ def get_alarm_statistics():
             'total': total,
             'pending': pending,
             'confirmed': confirmed,
+            'processing': processing,
             'resolved': resolved,
             'ignored': ignored
         },
@@ -244,7 +324,11 @@ def get_pending_count():
     """获取待处理报警数量"""
     _, claims = get_current_user_info()
     
-    query = Alarm.query.filter_by(status=0)
+    query = Alarm.query.filter(Alarm.status.in_([
+        ALARM_STATUS_PENDING,
+        ALARM_STATUS_CONFIRMED,
+        ALARM_STATUS_PROCESSING
+    ]))
     
     if claims.get('role') == 'manager' and claims.get('cinema_id'):
         query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))

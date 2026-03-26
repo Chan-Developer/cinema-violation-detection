@@ -1,13 +1,14 @@
-from flask import Blueprint, request, jsonify, send_file
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask import Blueprint, request, jsonify, current_app
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from werkzeug.utils import secure_filename
 from models import db
 from config import config
 from services.detection import DetectionWorker
+from services.video_detection import video_detection_manager
 import os
 import cv2
 import base64
-from io import BytesIO
+import uuid
 
 detect_bp = Blueprint('detect', __name__)
 
@@ -23,6 +24,12 @@ def is_image(filename):
     """检查是否为图片"""
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
     return ext in config['development'].ALLOWED_IMAGE
+
+
+def _upload_dir():
+    path = config['development'].UPLOAD_FOLDER
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 @detect_bp.route('/detect', methods=['POST'])
@@ -80,8 +87,7 @@ def detect_image():
 
         # 保存文件
         filename = secure_filename(file.filename)
-        upload_dir = config['development'].UPLOAD_FOLDER
-        os.makedirs(upload_dir, exist_ok=True)
+        upload_dir = _upload_dir()
         filepath = os.path.join(upload_dir, filename)
         file.save(filepath)
         print(f"✓ 文件已保存: {filepath}")
@@ -136,9 +142,7 @@ def detect_image():
         llm_description = call_llm_api(formatted_detections, img_base64)
         print(f"✓ LLM 分析完成")
 
-        # 清理
-        if os.path.exists(filepath):
-            os.remove(filepath)
+        # 保留原图/原视频，方便留痕复盘
 
         return jsonify({
             'success': True,
@@ -153,6 +157,75 @@ def detect_image():
         traceback.print_exc()
         # LLM 未成功时直接失败，避免返回本地固定模板文本
         return jsonify({'success': False, 'message': str(e)}), 502
+
+
+@detect_bp.route('/detect/video', methods=['POST'])
+@jwt_required()
+def detect_video_upload():
+    """上传视频并异步检测（每隔N帧检测一次）"""
+    try:
+        user_id = int(get_jwt_identity())
+        claims = get_jwt()
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'message': '没有找到文件'}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': '文件名为空'}), 400
+
+        if not allowed_file(file.filename):
+            return jsonify({'success': False, 'message': '不支持的文件格式'}), 400
+
+        if is_image(file.filename):
+            return jsonify({'success': False, 'message': '请上传视频文件'}), 400
+
+        frame_interval = request.form.get('frame_interval', 90, type=int)
+        camera_id = request.form.get('camera_id', type=int)
+        cinema_id = request.form.get('cinema_id', type=int)
+        detection_types = request.form.get('detection_types', '', type=str)
+
+        if claims.get('role') == 'manager' and claims.get('cinema_id'):
+            cinema_id = claims.get('cinema_id')
+
+        filename = secure_filename(file.filename)
+        unique_name = f"{uuid.uuid4().hex}_{filename}"
+        filepath = os.path.join(_upload_dir(), unique_name)
+        file.save(filepath)
+
+        task_id = video_detection_manager.start_task(
+            app=current_app._get_current_object(),
+            video_path=filepath,
+            camera_id=camera_id,
+            cinema_id=cinema_id,
+            detection_types=detection_types,
+            frame_interval=frame_interval,
+            created_by=user_id
+        )
+
+        return jsonify({
+            'success': True,
+            'message': '视频检测任务已创建',
+            'task_id': task_id
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@detect_bp.route('/detect/video/tasks/<string:task_id>', methods=['GET'])
+@jwt_required()
+def get_video_task(task_id):
+    """查询视频检测任务状态"""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    task = video_detection_manager.get_task(task_id)
+    if not task:
+        return jsonify({'success': False, 'message': '任务不存在'}), 404
+
+    created_by = task.get('created_by')
+    if created_by and created_by != user_id and claims.get('role') != 'admin':
+        return jsonify({'success': False, 'message': '无权查看该任务'}), 403
+
+    return jsonify({'success': True, 'task': task})
 
 
 @detect_bp.route('/detect/status/<int:camera_id>', methods=['GET'])

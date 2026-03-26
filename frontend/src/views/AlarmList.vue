@@ -22,8 +22,9 @@
           <el-select v-model="filters.status" placeholder="全部状态" clearable @change="loadAlarms" style="width: 120px">
             <el-option label="待处理" :value="0" />
             <el-option label="已确认" :value="1" />
-            <el-option label="已处理" :value="2" />
-            <el-option label="已忽略" :value="3" />
+            <el-option label="处理中" :value="2" />
+            <el-option label="已处理" :value="3" />
+            <el-option label="已忽略" :value="4" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -79,8 +80,9 @@
                 <el-dropdown-menu>
                   <el-dropdown-item @click="viewDetail(row)">详情</el-dropdown-item>
                   <el-dropdown-item v-if="row.status === 0" @click="handleAlarm(row, 'confirm')">确认</el-dropdown-item>
-                  <el-dropdown-item v-if="row.status === 1" @click="handleAlarm(row, 'resolve')">处理</el-dropdown-item>
-                  <el-dropdown-item v-if="row.status < 2" @click="handleAlarm(row, 'ignore')">忽略</el-dropdown-item>
+                  <el-dropdown-item v-if="row.status === 1" @click="handleAlarm(row, 'process')">处理中</el-dropdown-item>
+                  <el-dropdown-item v-if="row.status === 1 || row.status === 2" @click="handleAlarm(row, 'resolve')">处理完成</el-dropdown-item>
+                  <el-dropdown-item v-if="row.status <= 2" @click="handleAlarm(row, 'ignore')">忽略</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -226,6 +228,12 @@ const handleAlarm = async (alarm: any, action: string) => {
       await ElMessageBox.confirm('确认此报警?', '提示', { type: 'info' })
       await authStore.api.post(`/alarms/${alarm.id}/confirm`)
       ElMessage.success('已确认')
+    } else if (action === 'process') {
+      const { value } = await ElMessageBox.prompt('请输入处理备注', '处理报警', {
+        confirmButtonText: '确定', cancelButtonText: '取消'
+      })
+      await authStore.api.post(`/alarms/${alarm.id}/process`, { note: value })
+      ElMessage.success('已进入处理中')
     } else if (action === 'resolve') {
       const { value } = await ElMessageBox.prompt('请输入处理备注', '处理报警', {
         confirmButtonText: '确定', cancelButtonText: '取消'
@@ -248,7 +256,7 @@ const getTypeTag = (code: string) =>
   ({ photo: 'danger', smoke: 'warning', crowd: 'success', walk: 'info' } as Record<string, string>)[code] || 'info'
 
 const getStatusTag = (status: number) =>
-  ({ 0: 'danger', 1: 'warning', 2: 'success', 3: 'info' } as Record<number, string>)[status] || 'info'
+  ({ 0: 'danger', 1: 'warning', 2: '', 3: 'success', 4: 'info' } as Record<number, string>)[status] || 'info'
 
 onMounted(() => {
   loadCinemas()

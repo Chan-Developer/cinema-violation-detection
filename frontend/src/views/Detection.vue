@@ -72,7 +72,25 @@
             </div>
           </div>
 
-          <!-- LLM智能分析 -->
+          <div v-if="result.video_samples && result.video_samples.length > 0" class="llm-section">
+            <div class="section-title">
+              <el-icon><Film /></el-icon> 视频命中样本 ({{ result.video_samples.length }})
+            </div>
+            <div class="detection-items">
+              <a
+                v-for="(sample, si) in result.video_samples"
+                :key="si"
+                :href="sample.image_url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="video-sample-link"
+              >
+                帧 {{ sample.frame_index }}
+              </a>
+            </div>
+          </div>
+
+          <!-- 智能分析/任务摘要 -->
           <div v-if="result.llm_description" class="llm-section">
             <div class="section-title">
               <el-icon><DataAnalysis /></el-icon> 智能分析
@@ -142,22 +160,68 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { UploadFilled, Download, Delete, Setting, DataAnalysis } from '@element-plus/icons-vue'
+import { UploadFilled, Download, Delete, Setting, DataAnalysis, Film } from '@element-plus/icons-vue'
 import { getApiErrorMessage } from '../utils/error'
 
 const authStore = useAuthStore()
 
 const results = ref<any[]>([])
+const taskPollers = new Map<string, number>()
+const apiOrigin = (import.meta.env.VITE_API_BASE || 'http://localhost:9500/api').replace(/\/api\/?$/, '')
+
+const normalizeMediaUrl = (url: string) => {
+  if (!url) return url
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url
+  return `${apiOrigin}${url}`
+}
 
 const uploadRequest = async (options: any) => {
+  const file = options.file
   const formData = new FormData()
-  formData.append('file', options.file)
+  formData.append('file', file)
+
+  const isVideo = typeof file?.type === 'string' && file.type.startsWith('video/')
+
+  if (isVideo) {
+    const videoResult = {
+      timestamp: new Date().toISOString(),
+      processing: true,
+      progress: 0,
+      detections: [],
+      llm_description: '视频检测任务创建中...',
+      task_id: '',
+      file_name: file.name,
+      is_video: true,
+      video_samples: [] as any[]
+    }
+    results.value.unshift(videoResult)
+
+    try {
+      const res = await authStore.api.post('/detect/video', formData, {
+        timeout: 180000,
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      if (!res.data.success || !res.data.task_id) {
+        throw new Error(res.data.message || '任务创建失败')
+      }
+
+      videoResult.task_id = res.data.task_id
+      videoResult.llm_description = '视频检测任务处理中...'
+      startTaskPolling(videoResult)
+      options.onSuccess?.({ success: true, task_id: res.data.task_id, is_video: true })
+    } catch (e: any) {
+      results.value = results.value.filter(r => r !== videoResult)
+      options.onError?.(e)
+    }
+    return
+  }
 
   try {
-    // LLM 可能较慢，单独延长超时
+    // 图片检测 + LLM 可能较慢，单独延长超时
     const res = await authStore.api.post('/detect', formData, {
       timeout: 180000,
       headers: { 'Content-Type': 'multipart/form-data' }
@@ -165,6 +229,59 @@ const uploadRequest = async (options: any) => {
     options.onSuccess?.(res.data)
   } catch (e: any) {
     options.onError?.(e)
+  }
+}
+
+const startTaskPolling = (resultItem: any) => {
+  if (!resultItem.task_id) return
+
+  const timer = window.setInterval(async () => {
+    try {
+      const res = await authStore.api.get(`/detect/video/tasks/${resultItem.task_id}`)
+      if (!res.data.success) return
+
+      const task = res.data.task || {}
+      resultItem.progress = task.progress || 0
+      resultItem.processing = task.status === 'pending' || task.status === 'running'
+
+      if (task.status === 'completed') {
+        resultItem.processing = false
+        resultItem.progress = 100
+        resultItem.llm_description = task.summary || '视频检测完成'
+        resultItem.video_samples = (task.samples || []).map((sample: any) => ({
+          ...sample,
+          image_url: normalizeMediaUrl(sample.image_url)
+        }))
+
+        if (resultItem.video_samples.length > 0) {
+          resultItem.annotated_image = resultItem.video_samples[0].image_url
+          resultItem.detections = resultItem.video_samples[0].detections || []
+        } else {
+          resultItem.detections = []
+        }
+
+        clearTaskPolling(resultItem.task_id)
+        ElMessage.success('视频检测完成')
+      } else if (task.status === 'failed') {
+        resultItem.processing = false
+        resultItem.error = task.message || '视频检测失败'
+        resultItem.llm_description = ''
+        clearTaskPolling(resultItem.task_id)
+        ElMessage.error(resultItem.error)
+      }
+    } catch (_e) {
+      // 轮询期间网络抖动时忽略一次
+    }
+  }, 1500)
+
+  taskPollers.set(resultItem.task_id, timer)
+}
+
+const clearTaskPolling = (taskId: string) => {
+  const timer = taskPollers.get(taskId)
+  if (timer) {
+    clearInterval(timer)
+    taskPollers.delete(taskId)
   }
 }
 
@@ -191,6 +308,10 @@ const beforeUpload = (file: any) => {
 }
 
 const onUploadSuccess = (response: any) => {
+  if (response?.is_video) {
+    return
+  }
+
   if (response.success) {
     const result = {
       ...response,
@@ -274,6 +395,11 @@ onMounted(() => {
   if (saved) {
     results.value = JSON.parse(saved)
   }
+})
+
+onUnmounted(() => {
+  taskPollers.forEach(timer => clearInterval(timer))
+  taskPollers.clear()
 })
 
 watch(results, (newVal) => {
@@ -409,6 +535,18 @@ watch(results, (newVal) => {
   gap: 6px;
   padding: 6px 12px;
   background: linear-gradient(135deg, rgba(208, 132, 208, 0.1) 0%, rgba(167, 139, 219, 0.05) 100%);
+}
+
+.video-sample-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(124, 58, 237, 0.08);
+  color: #7c3aed;
+  text-decoration: none;
+  font-size: 12px;
 }
 
 .class-name {

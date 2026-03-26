@@ -118,11 +118,10 @@ const pendingCount = computed(() => authStore.pendingAlarmCount)
 
 const menuItems = [
   { path: '/', label: '仪表盘', icon: 'DataAnalysis', roles: null },
-  { path: '/monitor', label: '实时监控', icon: 'Monitor', roles: null },
-  { path: '/detection', label: '图片检测', icon: 'UploadFilled', roles: null },
+  { path: '/monitor', label: '视频识别', icon: 'Monitor', roles: null },
+  { path: '/detection', label: '视频检测', icon: 'UploadFilled', roles: null },
   { path: '/alarms', label: '报警管理', icon: 'Bell', roles: null, badge: () => authStore.pendingAlarmCount },
   { path: '/cinemas', label: '影院管理', icon: 'OfficeBuilding', roles: ['admin', 'manager'] },
-  { path: '/cameras', label: '设备管理', icon: 'VideoCamera', roles: null },
   { path: '/users', label: '用户管理', icon: 'User', roles: ['admin'] },
   { path: '/roles', label: '角色管理', icon: 'Setting', roles: ['admin'] },
   { path: '/settings', label: '系统设置', icon: 'Setting', roles: null },

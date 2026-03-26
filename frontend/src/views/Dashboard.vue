@@ -120,7 +120,7 @@ const alarmTypeTag = (code: string) =>
   ({ photo: 'danger', smoke: 'warning', crowd: 'success', walk: 'info' } as Record<string, string>)[code] || 'info'
 
 const statusTag = (status: number) =>
-  ({ 0: 'danger', 1: 'warning', 2: 'success', 3: 'info' } as Record<number, string>)[status] || 'info'
+  ({ 0: 'danger', 1: 'warning', 2: '', 3: 'success', 4: 'info' } as Record<number, string>)[status] || 'info'
 
 const initCharts = () => {
   if (trendChartEl.value) {
