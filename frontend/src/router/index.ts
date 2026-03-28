@@ -29,6 +29,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/Monitor.vue')
       },
       {
+        path: 'detection',
+        name: 'Detection',
+        component: () => import('../views/Detection.vue')
+      },
+      {
         path: 'alarms',
         name: 'AlarmList',
         component: () => import('../views/AlarmList.vue')
@@ -55,11 +60,6 @@ const routes: RouteRecordRaw[] = [
         path: 'settings',
         name: 'Settings',
         component: () => import('../views/Settings.vue')
-      },
-      {
-        path: 'detection',
-        name: 'Detection',
-        component: () => import('../views/Detection.vue')
       }
     ]
   }

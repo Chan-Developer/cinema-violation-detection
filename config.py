@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 
 # Always load project .env from repo root to avoid import-order/cwd issues.
 ENV_PATH = os.path.join(os.path.dirname(__file__), '.env')
-load_dotenv(ENV_PATH, override=True)
+# Do not overwrite runtime environment variables (e.g. one-off token override).
+load_dotenv(ENV_PATH, override=False)
 
 
 def _db_env(name: str, default: str) -> str:

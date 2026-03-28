@@ -4,8 +4,8 @@
       <template #header>
         <div class="header-row">
           <span class="title">视频识别监控（上传视频代替摄像头）</span>
-          <el-tag type="danger" effect="light" round>
-            待处理告警 {{ authStore.pendingAlarmCount }}
+          <el-tag type="success" effect="light" round>
+            识别结果自动存档
           </el-tag>
         </div>
       </template>
@@ -16,15 +16,8 @@
             <el-input-number v-model="frameInterval" :min="1" :max="300" :step="1" />
             <span class="hint">每 {{ frameInterval }} 帧检测一次</span>
           </el-form-item>
-          <el-form-item label="检测类型">
-            <el-checkbox-group v-model="detectionTypes">
-              <el-checkbox label="photo">盗摄</el-checkbox>
-              <el-checkbox label="smoke">吸烟</el-checkbox>
-              <el-checkbox label="crowd">拥堵</el-checkbox>
-              <el-checkbox label="walk">走动</el-checkbox>
-            </el-checkbox-group>
-          </el-form-item>
         </el-form>
+        <div class="hint">当前逻辑：YOLO仅检测“人”，违规行为由大模型结合画面判定。</div>
       </div>
 
       <el-upload
@@ -38,7 +31,7 @@
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">点击或拖拽上传视频进行识别</div>
         <template #tip>
-          <div class="el-upload__tip">视频上传后会自动检测并产生日志与告警</div>
+          <div class="el-upload__tip">视频上传后会按采样帧识别并保存结果</div>
         </template>
       </el-upload>
     </el-card>
@@ -46,8 +39,7 @@
     <el-card>
       <template #header>
         <div class="header-row">
-          <span class="title">检测任务</span>
-          <el-button type="primary" text @click="$router.push('/alarms')">查看告警列表</el-button>
+          <span class="title">识别任务</span>
         </div>
       </template>
 
@@ -71,23 +63,49 @@
           <div class="task-stats">
             <span>已处理帧: {{ task.processed_frames || 0 }}</span>
             <span>采样帧: {{ task.sampled_frames || 0 }}</span>
-            <span>告警数: {{ task.alarms_created || 0 }}</span>
+            <span>结果数: {{ task.records_saved || 0 }}</span>
+            <span>违规帧: {{ task.violation_frames || 0 }}</span>
           </div>
 
           <div v-if="task.summary" class="summary">{{ task.summary }}</div>
           <div v-if="task.message && task.status === 'failed'" class="error">{{ task.message }}</div>
 
           <div v-if="task.samples && task.samples.length > 0" class="samples">
-            <a
-              v-for="(sample, index) in task.samples.slice(0, 10)"
+            <div
+              v-for="(sample, index) in task.samples.slice(-10).reverse()"
               :key="index"
-              :href="normalizeMediaUrl(sample.image_url)"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="sample-link"
+              class="sample-card"
             >
-              帧 {{ sample.frame_index }}
-            </a>
+              <div class="sample-head">
+                <a
+                  :href="normalizeMediaUrl(sample.image_url)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="sample-link"
+                >
+                  帧 {{ sample.frame_index }}
+                </a>
+                <el-tag :type="sample.violation ? 'danger' : 'success'" size="small" round>
+                  {{ sample.violation ? '有违规' : '无违规' }}
+                </el-tag>
+              </div>
+              <div class="sample-meta">
+                <span v-if="sample.violation_codes && sample.violation_codes.length > 0">
+                  违规类型: {{ sample.violation_codes.join(', ') }}
+                </span>
+                <span v-else>
+                  违规类型: 无
+                </span>
+              </div>
+              <div class="sample-summary">
+                {{ sample.llm_analysis?.summary || '无大模型结论' }}
+              </div>
+              <el-collapse class="sample-collapse">
+                <el-collapse-item title="查看大模型原文">
+                  <pre class="llm-raw">{{ sample.llm_analysis?.raw_reply || '（无）' }}</pre>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
           </div>
         </el-card>
       </div>
@@ -96,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
@@ -104,7 +122,6 @@ import { useAuthStore } from '../stores/auth'
 const authStore = useAuthStore()
 
 const frameInterval = ref(90)
-const detectionTypes = ref(['photo', 'smoke', 'crowd', 'walk'])
 const tasks = ref<any[]>([])
 const pollTimers = new Map<string, number>()
 
@@ -137,7 +154,6 @@ const uploadVideo = async (options: any) => {
   const formData = new FormData()
   formData.append('file', options.file)
   formData.append('frame_interval', String(frameInterval.value || 90))
-  formData.append('detection_types', detectionTypes.value.join(','))
 
   try {
     const res = await authStore.api.post('/detect/video', formData, {
@@ -154,7 +170,8 @@ const uploadVideo = async (options: any) => {
       progress: 0,
       processed_frames: 0,
       sampled_frames: 0,
-      alarms_created: 0,
+      records_saved: 0,
+      violation_frames: 0,
       samples: []
     }
 
@@ -177,6 +194,29 @@ const updateTask = (taskId: string, taskData: any) => {
   }
 }
 
+const fetchTaskResults = async (taskId: string) => {
+  try {
+    const res = await authStore.api.get(`/detect/video/tasks/${taskId}/results`)
+    if (!res.data.success) return []
+    return (res.data.results || []).map((item: any) => ({
+      frame_index: item.frame_index,
+      image_url: normalizeMediaUrl(item.image_url),
+      person_count: item.person_count,
+      violation: item.violation,
+      violation_codes: item.violation_codes || [],
+      llm_analysis: {
+        summary: item.llm_summary || '',
+        raw_reply: item.llm_reply || '',
+        violation: item.violation,
+        violation_codes: item.violation_codes || [],
+        llm_skipped: (item.person_count || 0) === 0
+      }
+    }))
+  } catch (_e) {
+    return []
+  }
+}
+
 const startPolling = (taskId: string) => {
   const timer = window.setInterval(async () => {
     try {
@@ -187,8 +227,13 @@ const startPolling = (taskId: string) => {
       updateTask(taskId, task)
 
       if (task.status === 'completed' || task.status === 'failed') {
+        if (task.status === 'completed') {
+          const persisted = await fetchTaskResults(taskId)
+          if (persisted.length > 0) {
+            updateTask(taskId, { samples: persisted })
+          }
+        }
         clearPolling(taskId)
-        authStore.fetchPendingAlarms()
       }
     } catch (_e) {
       // 网络抖动忽略单次错误
@@ -225,10 +270,6 @@ const statusTag = (status: string) => {
   }
   return map[status] || 'info'
 }
-
-onMounted(() => {
-  authStore.fetchPendingAlarms()
-})
 
 onUnmounted(() => {
   pollTimers.forEach((timer) => clearInterval(timer))
@@ -313,9 +354,52 @@ onUnmounted(() => {
 
 .samples {
   margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.sample-card {
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.sample-head {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.sample-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #666;
+}
+
+.sample-summary {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.sample-collapse {
+  margin-top: 6px;
+}
+
+.llm-raw {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #333;
+  margin: 0;
+  padding: 8px;
+  background: #fafafa;
+  border-radius: 6px;
 }
 
 .sample-link {

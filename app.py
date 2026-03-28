@@ -11,8 +11,8 @@ from flask_jwt_extended import JWTManager
 from config import config
 from models import db, Role, User, Cinema, AlarmType, AlarmLevel
 
-# 加载 .env 环境变量（覆盖已存在的环境变量，避免旧值残留）
-load_dotenv(override=True)
+# 加载 .env 环境变量（不覆盖外部传入变量，便于临时调试）
+load_dotenv(override=False)
 
 # 初始化扩展
 jwt = JWTManager()

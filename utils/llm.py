@@ -1,7 +1,9 @@
 import os
 import json
 import base64
+import subprocess
 import requests
+from dotenv import dotenv_values
 
 
 def _get_openai_client():
@@ -14,7 +16,16 @@ def _get_openai_client():
     return OpenAI
 
 def _require_env(name: str) -> str:
-    value = os.environ.get(name)
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    file_value = (dotenv_values(env_path).get(name) or '').strip()
+    env_value = (os.environ.get(name) or '').strip()
+
+    # LLM 密钥优先读取项目 .env，避免进程里残留旧环境变量导致鉴权失败
+    if name in {'MODELSCOPE_API_KEY', 'OPENAI_API_KEY', 'DASHSCOPE_API_KEY', 'ZHIPU_API_KEY'}:
+        value = file_value or env_value
+    else:
+        value = env_value or file_value
+
     if value is not None:
         value = value.strip()
     if value:
@@ -161,40 +172,77 @@ def call_modelscope(detections, base64_image):
     """调用ModelScope API (Qwen3-VL) - 分析标注图片"""
     api_key = _require_env('MODELSCOPE_API_KEY')
     prompt = build_prompt(detections)
+    # 使用 HTTP 直连，避免某些环境下 openai/httpx 连接异常
+    url = "https://api-inference.modelscope.cn/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "Qwen/Qwen3-VL-8B-Instruct",
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+            ],
+        }],
+        "stream": False,
+        "max_tokens": 200,
+    }
 
-    # 使用 OpenAI 兼容的 API
-    OpenAI = _get_openai_client()
-    client = OpenAI(
-        base_url='https://api-inference.modelscope.cn/v1',
-        api_key=api_key,
-    )
+    def _extract_content(result_obj):
+        try:
+            return result_obj["choices"][0]["message"]["content"]
+        except Exception as e:
+            raise RuntimeError(f"ModelScope API 响应解析失败: {result_obj}") from e
 
+    # 首选 Python HTTP 客户端
     try:
-        response = client.chat.completions.create(
-            model='Qwen/Qwen3-VL-8B-Instruct',  # 更新为支持视觉的模型
-            messages=[{
-                'role': 'user',
-                'content': [
-                    {
-                        'type': 'text',
-                        'text': prompt,
-                    },
-                    {
-                        'type': 'image_url',
-                        'image_url': {
-                            'url': f'data:image/jpeg;base64,{base64_image}',
-                        },
-                    }
-                ],
-            }],
-            stream=False,
-            max_tokens=200
-        )
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        result = response.json()
+        if response.status_code >= 400:
+            raise RuntimeError(f"HTTP {response.status_code} - {result}")
+        return _extract_content(result)
+    except Exception as first_error:
+        # 某些环境下 Python TLS 与网关握手不稳定，回退到 curl 通道
+        payload_text = json.dumps(payload, ensure_ascii=False)
+        cmd = [
+            "curl", "-sS", "-X", "POST", url,
+            "-H", f"Authorization: Bearer {api_key}",
+            "-H", "Content-Type: application/json",
+            "--data-binary", "@-",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=payload_text,
+                text=True,
+                capture_output=True,
+                timeout=70,
+                check=False,
+            )
+        except Exception as curl_error:
+            raise RuntimeError(
+                f"ModelScope API 调用失败: python={first_error}; curl={curl_error}"
+            ) from curl_error
 
-        return response.choices[0].message.content
-    except Exception as e:
-        # 不降级到本地分析，直接抛出给上层处理
-        raise RuntimeError(f"ModelScope API 调用失败: {e}") from e
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"ModelScope API 调用失败: python={first_error}; curl={proc.stderr.strip()}"
+            )
+
+        try:
+            curl_result = json.loads(proc.stdout or "{}")
+        except Exception as parse_error:
+            raise RuntimeError(
+                f"ModelScope API 响应解析失败: {proc.stdout[:500]}"
+            ) from parse_error
+
+        if "error" in curl_result:
+            raise RuntimeError(f"ModelScope API 调用失败: {curl_result['error']}")
+
+        return _extract_content(curl_result)
 
 
 def generate_local_description(detections):

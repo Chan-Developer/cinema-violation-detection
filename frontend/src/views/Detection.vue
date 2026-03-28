@@ -40,7 +40,7 @@
           <el-progress
             v-if="result.processing"
             :percentage="result.progress || 0"
-            :status="result.progress === 100 ? 'success' : 'exception'"
+            :status="result.progress === 100 ? 'success' : ''"
             class="processing-bar"
           />
 
@@ -76,28 +76,32 @@
             <div class="section-title">
               <el-icon><Film /></el-icon> 视频命中样本 ({{ result.video_samples.length }})
             </div>
-            <div class="detection-items">
-              <a
-                v-for="(sample, si) in result.video_samples"
-                :key="si"
-                :href="sample.image_url"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="video-sample-link"
-              >
-                帧 {{ sample.frame_index }}
-              </a>
+            <div class="sample-list">
+              <div v-for="(sample, si) in result.video_samples.slice(0, 8)" :key="si" class="sample-item">
+                <div class="sample-item-head">
+                  <a
+                    :href="sample.image_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="video-sample-link"
+                  >
+                    帧 {{ sample.frame_index }}
+                  </a>
+                  <el-tag :type="sample.violation ? 'danger' : 'success'" size="small" round>
+                    {{ sample.violation ? '有违规' : '无违规' }}
+                  </el-tag>
+                </div>
+                <div class="sample-item-summary">{{ sample.llm_summary || '无大模型结论' }}</div>
+              </div>
             </div>
           </div>
 
           <!-- 智能分析/任务摘要 -->
-          <div v-if="result.llm_description" class="llm-section">
+          <div v-if="displayLLMText(result)" class="llm-section">
             <div class="section-title">
               <el-icon><DataAnalysis /></el-icon> 智能分析
             </div>
-            <div class="llm-content">
-              {{ result.llm_description }}
-            </div>
+            <pre class="llm-content">{{ displayLLMText(result) }}</pre>
           </div>
 
           <!-- 错误提示 -->
@@ -171,11 +175,16 @@ const authStore = useAuthStore()
 const results = ref<any[]>([])
 const taskPollers = new Map<string, number>()
 const apiOrigin = (import.meta.env.VITE_API_BASE || 'http://localhost:9500/api').replace(/\/api\/?$/, '')
+const MAX_POLL_ERRORS = 5
 
 const normalizeMediaUrl = (url: string) => {
   if (!url) return url
   if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url
   return `${apiOrigin}${url}`
+}
+
+const displayLLMText = (result: any) => {
+  return result.llm_description || result.llm_summary || result.llm_reply || ''
 }
 
 const uploadRequest = async (options: any) => {
@@ -191,7 +200,7 @@ const uploadRequest = async (options: any) => {
       processing: true,
       progress: 0,
       detections: [],
-      llm_description: '视频检测任务创建中...',
+      llm_description: '视频上传中...',
       task_id: '',
       file_name: file.name,
       is_video: true,
@@ -234,8 +243,9 @@ const uploadRequest = async (options: any) => {
 
 const startTaskPolling = (resultItem: any) => {
   if (!resultItem.task_id) return
+  let pollErrorCount = 0
 
-  const timer = window.setInterval(async () => {
+  const pollOnce = async () => {
     try {
       const res = await authStore.api.get(`/detect/video/tasks/${resultItem.task_id}`)
       if (!res.data.success) return
@@ -243,19 +253,54 @@ const startTaskPolling = (resultItem: any) => {
       const task = res.data.task || {}
       resultItem.progress = task.progress || 0
       resultItem.processing = task.status === 'pending' || task.status === 'running'
+      if (resultItem.processing) {
+        const processed = task.processed_frames || 0
+        const total = task.total_frames || 0
+        if (total > 0) {
+          resultItem.llm_description = `${task.message || '视频检测任务处理中...'}（${processed}/${total}帧）`
+        } else {
+          resultItem.llm_description = `${task.message || '视频检测任务处理中...'}（已处理${processed}帧）`
+        }
+      }
 
       if (task.status === 'completed') {
         resultItem.processing = false
         resultItem.progress = 100
         resultItem.llm_description = task.summary || '视频检测完成'
-        resultItem.video_samples = (task.samples || []).map((sample: any) => ({
-          ...sample,
-          image_url: normalizeMediaUrl(sample.image_url)
-        }))
+
+        // 优先读取持久化识别结果，确保可看到大模型输出文本
+        try {
+          const rs = await authStore.api.get(`/detect/video/tasks/${resultItem.task_id}/results`)
+          if (rs.data?.success) {
+            resultItem.video_samples = (rs.data.results || []).map((sample: any) => ({
+              ...sample,
+              image_url: normalizeMediaUrl(sample.image_url),
+              llm_summary: sample.llm_summary || '',
+              llm_reply: sample.llm_reply || ''
+            }))
+          } else {
+            resultItem.video_samples = (task.samples || []).map((sample: any) => ({
+              ...sample,
+              image_url: normalizeMediaUrl(sample.image_url),
+              llm_summary: sample.llm_analysis?.summary || '',
+              llm_reply: sample.llm_analysis?.raw_reply || ''
+            }))
+          }
+        } catch (_e) {
+          resultItem.video_samples = (task.samples || []).map((sample: any) => ({
+            ...sample,
+            image_url: normalizeMediaUrl(sample.image_url),
+            llm_summary: sample.llm_analysis?.summary || '',
+            llm_reply: sample.llm_analysis?.raw_reply || ''
+          }))
+        }
 
         if (resultItem.video_samples.length > 0) {
           resultItem.annotated_image = resultItem.video_samples[0].image_url
           resultItem.detections = resultItem.video_samples[0].detections || []
+          if (!resultItem.llm_description) {
+            resultItem.llm_description = resultItem.video_samples[0].llm_summary || ''
+          }
         } else {
           resultItem.detections = []
         }
@@ -269,10 +314,46 @@ const startTaskPolling = (resultItem: any) => {
         clearTaskPolling(resultItem.task_id)
         ElMessage.error(resultItem.error)
       }
-    } catch (_e) {
-      // 轮询期间网络抖动时忽略一次
+      pollErrorCount = 0
+    } catch (e: any) {
+      if (e?.response?.status === 404) {
+        try {
+          const rs = await authStore.api.get(`/detect/video/tasks/${resultItem.task_id}/results`)
+          if (rs.data?.success && (rs.data.total || 0) > 0) {
+            resultItem.processing = false
+            resultItem.progress = 100
+            resultItem.llm_description = '任务状态已丢失，已从识别记录恢复'
+            resultItem.video_samples = (rs.data.results || []).map((sample: any) => ({
+              ...sample,
+              image_url: normalizeMediaUrl(sample.image_url),
+              llm_summary: sample.llm_summary || '',
+              llm_reply: sample.llm_reply || ''
+            }))
+            if (resultItem.video_samples.length > 0) {
+              resultItem.annotated_image = resultItem.video_samples[0].image_url
+              resultItem.detections = resultItem.video_samples[0].detections || []
+            }
+            clearTaskPolling(resultItem.task_id)
+            ElMessage.success('已从识别记录恢复任务结果')
+            return
+          }
+        } catch (_ignored) {
+          // ignore and continue retry counting
+        }
+      }
+      pollErrorCount += 1
+      if (pollErrorCount >= MAX_POLL_ERRORS) {
+        resultItem.processing = false
+        resultItem.error = '任务状态获取失败，请重新上传视频'
+        resultItem.llm_description = ''
+        clearTaskPolling(resultItem.task_id)
+        ElMessage.error(resultItem.error)
+      }
     }
-  }, 1500)
+  }
+
+  void pollOnce()
+  const timer = window.setInterval(pollOnce, 1500)
 
   taskPollers.set(resultItem.task_id, timer)
 }
@@ -393,8 +474,29 @@ const topClass = computed(() => {
 onMounted(() => {
   const saved = localStorage.getItem('detection_results')
   if (saved) {
-    results.value = JSON.parse(saved)
+    const parsed = JSON.parse(saved)
+    results.value = (Array.isArray(parsed) ? parsed : []).map((item: any) => ({
+      ...item,
+      llm_description: item.llm_description || item.llm_summary || item.llm_reply || '',
+      video_samples: (item.video_samples || []).map((sample: any) => ({
+        ...sample,
+        llm_summary: sample.llm_summary || sample.llm_analysis?.summary || '',
+        llm_reply: sample.llm_reply || sample.llm_analysis?.raw_reply || '',
+        image_url: normalizeMediaUrl(sample.image_url)
+      }))
+    }))
   }
+
+  results.value.forEach((item: any) => {
+    if (!item?.processing) return
+    if (item?.is_video && item?.task_id) {
+      startTaskPolling(item)
+      return
+    }
+    item.processing = false
+    item.error = '任务状态已失效，请重新上传视频'
+    item.llm_description = ''
+  })
 })
 
 onUnmounted(() => {
@@ -549,6 +651,33 @@ watch(results, (newVal) => {
   font-size: 12px;
 }
 
+.sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sample-item {
+  border: 1px solid #ede5f5;
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.sample-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.sample-item-summary {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.5;
+}
+
 .class-name {
   font-weight: 600;
 }
@@ -566,6 +695,9 @@ watch(results, (newVal) => {
   font-size: 14px;
   color: #4b5563;
   line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
 }
 
 .result-actions {

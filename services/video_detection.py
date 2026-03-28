@@ -1,16 +1,18 @@
 import os
 import cv2
-import time
 import threading
 import uuid
+import base64
+import re
 from datetime import datetime
 
 from models import (
-    db, Cinema, Camera, Alarm, AlarmType, AlarmLevel, AlarmActionLog,
-    ALARM_STATUS_PENDING
+    db, Cinema, Camera, VideoRecognitionResult,
+    Alarm, AlarmType, AlarmLevel, AlarmActionLog, ALARM_STATUS_PENDING
 )
 from services.detection import DetectionWorker
 from services.websocket import socketio, emit_alarm
+from utils.llm import call_llm_api
 
 
 class VideoDetectionTaskManager:
@@ -40,9 +42,17 @@ class VideoDetectionTaskManager:
         cinema_id=None,
         detection_types='',
         frame_interval=90,
-        created_by=None
+        created_by=None,
+        alarm_window_seconds=60,
+        alarm_threshold=3,
+        alarm_cooldown_seconds=None
     ):
         frame_interval = max(1, int(frame_interval or 90))
+        alarm_window_seconds = max(1, int(alarm_window_seconds or 60))
+        alarm_threshold = max(1, int(alarm_threshold or 3))
+        if alarm_cooldown_seconds is None:
+            alarm_cooldown_seconds = alarm_window_seconds
+        alarm_cooldown_seconds = max(1, int(alarm_cooldown_seconds))
         task_id = uuid.uuid4().hex
         now = datetime.now().isoformat()
 
@@ -60,7 +70,12 @@ class VideoDetectionTaskManager:
             'processed_frames': 0,
             'sampled_frames': 0,
             'hit_samples': 0,
+            'records_saved': 0,
+            'violation_frames': 0,
             'alarms_created': 0,
+            'alarm_window_seconds': alarm_window_seconds,
+            'alarm_threshold': alarm_threshold,
+            'alarm_cooldown_seconds': alarm_cooldown_seconds,
             'samples': [],
             'created_at': now,
             'updated_at': now,
@@ -93,7 +108,7 @@ class VideoDetectionTaskManager:
             self.tasks[task_id].update(kwargs)
             self.tasks[task_id]['updated_at'] = datetime.now().isoformat()
 
-    def _run_task(self, app, task_id, detection_types):
+    def _run_task(self, app, task_id, _detection_types):
         task = self.get_task(task_id)
         if not task:
             return
@@ -102,11 +117,15 @@ class VideoDetectionTaskManager:
         frame_interval = task['frame_interval']
         camera_id = task['camera_id']
         cinema_id = task.get('cinema_id')
+        records_saved = 0
+        violation_frames = 0
         alarms_created = 0
         sampled_frames = 0
         hit_samples = 0
         frame_index = 0
-        cooldown_map = {}
+        alarm_ids = []
+        violation_events = []
+        last_alarm_second = -1e9
 
         self._update_task(task_id, status='running', message='开始处理视频')
         cap = None
@@ -118,15 +137,13 @@ class VideoDetectionTaskManager:
                     raise RuntimeError('无法打开视频文件')
 
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-                self._update_task(task_id, total_frames=total_frames)
+                fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+                if fps <= 0:
+                    fps = 25.0
+                self._update_task(task_id, total_frames=total_frames, fps=round(fps, 2))
 
-                camera = Camera.query.get(camera_id) if camera_id else None
-                if not detection_types and camera and camera.detection_types:
-                    detection_types = camera.detection_types
-                if not detection_types:
-                    detection_types = 'photo,smoke,crowd,walk,phone,person'
-
-                detector = DetectionWorker(camera_id=camera_id or 0, detection_types=detection_types)
+                # 新逻辑：YOLO 只做人检测，违规判定交给大模型
+                detector = DetectionWorker(camera_id=camera_id or 0, detection_types='person')
 
                 while True:
                     ok, frame = cap.read()
@@ -148,37 +165,97 @@ class VideoDetectionTaskManager:
                     detector.last_detection_time = {}
                     detections_raw = detector._detect(frame)
                     detections = self._normalize_detections(detections_raw)
-                    if not detections:
-                        continue
+                    person_detections = [d for d in detections if d.get('class') == 'person']
+                    image_url = self._save_annotated_frame(task_id, frame_index, frame.copy(), person_detections)
 
-                    hit_samples += 1
-                    image_url = self._save_annotated_frame(task_id, frame_index, frame.copy(), detections)
-                    alarm_codes = self._infer_alarm_codes(detections)
+                    if person_detections:
+                        hit_samples += 1
+                        try:
+                            llm_analysis = self._analyze_frame_with_llm(frame, person_detections)
+                        except Exception as llm_exc:
+                            llm_analysis = {
+                                'raw_reply': '',
+                                'violation': False,
+                                'violation_codes': [],
+                                'flags': {'smoke': False, 'photo': False, 'other': False},
+                                'summary': f'LLM调用失败: {llm_exc}',
+                                'llm_skipped': False,
+                            }
+                    else:
+                        llm_analysis = {
+                            'raw_reply': '',
+                            'violation': False,
+                            'violation_codes': [],
+                            'flags': {'smoke': False, 'photo': False, 'other': False},
+                            'summary': '未检测到人员，跳过大模型判定',
+                            'llm_skipped': True,
+                        }
 
-                    alarm_ids = []
-                    for alarm_code in alarm_codes:
-                        alarm_id = self._create_alarm_from_detection(
-                            camera_id=camera_id,
-                            cinema_id=cinema_id,
-                            alarm_code=alarm_code,
-                            frame_index=frame_index,
-                            image_url=image_url,
-                            detections=detections,
-                            task_id=task_id,
-                            cooldown_map=cooldown_map,
-                        )
-                        if alarm_id:
-                            alarms_created += 1
-                            alarm_ids.append(alarm_id)
+                    violation_codes = llm_analysis.get('violation_codes', [])
+                    if llm_analysis.get('violation'):
+                        violation_frames += 1
+
+                    sample_second = frame_index / fps if fps > 0 else float(frame_index)
+
+                    result_id = self._save_recognition_result(
+                        task_id=task_id,
+                        camera_id=camera_id,
+                        cinema_id=cinema_id,
+                        frame_index=frame_index,
+                        image_url=image_url,
+                        detections=person_detections,
+                        llm_analysis=llm_analysis,
+                    )
+                    if result_id:
+                        records_saved += 1
 
                     sample = {
                         'frame_index': frame_index,
                         'image_url': image_url,
-                        'detections': detections,
-                        'alarm_codes': alarm_codes,
-                        'alarm_ids': alarm_ids,
+                        'detections': person_detections,
+                        'person_count': len(person_detections),
+                        'violation': bool(llm_analysis.get('violation')),
+                        'violation_codes': violation_codes,
+                        'result_id': result_id,
+                        'llm_analysis': llm_analysis,
                     }
                     self._append_sample(task_id, sample)
+
+                    if sample['violation']:
+                        violation_events.append({
+                            'at_second': sample_second,
+                            'frame_index': frame_index,
+                            'image_url': image_url,
+                            'detections': person_detections,
+                            'violation_codes': violation_codes,
+                            'llm_analysis': llm_analysis,
+                        })
+                        window_seconds = task.get('alarm_window_seconds', 60)
+                        threshold = task.get('alarm_threshold', 3)
+                        cooldown_seconds = task.get('alarm_cooldown_seconds', window_seconds)
+
+                        window_start = sample_second - window_seconds
+                        violation_events = [e for e in violation_events if e['at_second'] >= window_start]
+                        recent_count = len(violation_events)
+
+                        if (
+                            recent_count >= threshold and
+                            (sample_second - last_alarm_second) >= cooldown_seconds
+                        ):
+                            alarm_id = self._create_threshold_alarm(
+                                task_id=task_id,
+                                camera_id=camera_id,
+                                cinema_id=cinema_id,
+                                latest_sample=sample,
+                                recent_count=recent_count,
+                                window_seconds=window_seconds,
+                                threshold=threshold,
+                            )
+                            if alarm_id:
+                                alarms_created += 1
+                                alarm_ids.append(alarm_id)
+                                last_alarm_second = sample_second
+                                self._update_task(task_id, alarms_created=alarms_created)
 
                     socketio.emit('video_detection_progress', {
                         'task_id': task_id,
@@ -188,7 +265,8 @@ class VideoDetectionTaskManager:
 
                 summary = (
                     f"视频处理完成：共处理{frame_index}帧，采样{sampled_frames}帧，"
-                    f"命中{hit_samples}次，创建{alarms_created}条告警。"
+                    f"命中{hit_samples}次，保存{records_saved}条识别结果，"
+                    f"其中违规帧{violation_frames}条，触发告警{alarms_created}次。"
                 )
                 self._update_task(
                     task_id,
@@ -197,7 +275,10 @@ class VideoDetectionTaskManager:
                     message='处理完成',
                     sampled_frames=sampled_frames,
                     hit_samples=hit_samples,
+                    records_saved=records_saved,
+                    violation_frames=violation_frames,
                     alarms_created=alarms_created,
+                    alarm_ids=alarm_ids,
                     summary=summary,
                     finished_at=datetime.now().isoformat()
                 )
@@ -214,7 +295,10 @@ class VideoDetectionTaskManager:
                 message=f'处理失败: {e}',
                 sampled_frames=sampled_frames,
                 hit_samples=hit_samples,
+                records_saved=records_saved,
+                violation_frames=violation_frames,
                 alarms_created=alarms_created,
+                alarm_ids=alarm_ids,
                 finished_at=datetime.now().isoformat()
             )
             socketio.emit('video_detection_done', {
@@ -249,20 +333,67 @@ class VideoDetectionTaskManager:
         return normalized
 
     @staticmethod
-    def _infer_alarm_codes(detections):
-        classes = {d.get('class') for d in detections if d.get('class')}
-        alarm_codes = set()
+    def _encode_frame_to_base64(frame):
+        ok, buffer = cv2.imencode('.jpg', frame)
+        if not ok:
+            raise RuntimeError('无法编码视频帧')
+        return base64.b64encode(buffer.tobytes()).decode('utf-8')
 
-        if 'photo' in classes or 'phone' in classes:
-            alarm_codes.add('photo')
-        if 'smoke' in classes:
-            alarm_codes.add('smoke')
-        if 'crowd' in classes:
-            alarm_codes.add('crowd')
-        if 'walk' in classes:
-            alarm_codes.add('walk')
+    @staticmethod
+    def _parse_llm_analysis(raw_reply):
+        text = (raw_reply or '').strip()
+        if not text:
+            return {
+                'violation': False,
+                'violation_codes': [],
+                'flags': {'smoke': False, 'photo': False, 'other': False},
+                'summary': '大模型未返回有效内容',
+            }
 
-        return sorted(alarm_codes)
+        def has_yes(label):
+            pattern = rf"{label}\s*[:：]\s*有"
+            return bool(re.search(pattern, text, flags=re.IGNORECASE))
+
+        smoke_yes = has_yes(r"抽烟行为")
+        photo_yes = has_yes(r"拍照/录视频")
+        other_yes = has_yes(r"其他违规")
+
+        violation_codes = []
+        if smoke_yes:
+            violation_codes.append('smoke')
+        if photo_yes:
+            violation_codes.append('photo')
+        if other_yes:
+            violation_codes.append('walk')
+
+        conclusion = ''
+        conclusion_match = re.search(r"结论\s*[:：]\s*(.+)", text)
+        if conclusion_match:
+            conclusion = conclusion_match.group(1).strip()
+
+        return {
+            'violation': bool(violation_codes),
+            'violation_codes': violation_codes,
+            'flags': {
+                'smoke': smoke_yes,
+                'photo': photo_yes,
+                'other': other_yes,
+            },
+            'summary': conclusion or text[:200],
+        }
+
+    def _analyze_frame_with_llm(self, frame, person_detections):
+        base64_image = self._encode_frame_to_base64(frame)
+        llm_reply = call_llm_api(person_detections, base64_image)
+        parsed = self._parse_llm_analysis(llm_reply)
+        return {
+            'raw_reply': llm_reply,
+            'violation': parsed['violation'],
+            'violation_codes': parsed['violation_codes'],
+            'flags': parsed['flags'],
+            'summary': parsed['summary'],
+            'llm_skipped': False,
+        }
 
     @staticmethod
     def _save_annotated_frame(task_id, frame_index, frame, detections):
@@ -279,18 +410,8 @@ class VideoDetectionTaskManager:
         cv2.imwrite(filepath, frame)
         return f"/static/alarms/video/{filename}"
 
-    @staticmethod
-    def _pick_level(max_confidence):
-        if max_confidence >= 0.8:
-            return AlarmLevel.query.filter_by(code='critical').first()
-        if max_confidence >= 0.7:
-            return AlarmLevel.query.filter_by(code='high').first()
-        if max_confidence >= 0.6:
-            return AlarmLevel.query.filter_by(code='medium').first()
-        return AlarmLevel.query.filter_by(code='low').first()
-
     def _get_or_create_upload_camera(self, preferred_cinema_id=None):
-        """在无摄像头模式下，使用“视频上传源”作为告警来源"""
+        """在无摄像头模式下，使用“视频上传源”作为识别来源"""
         cinema = None
         if preferred_cinema_id:
             cinema = Cinema.query.get(preferred_cinema_id)
@@ -330,43 +451,97 @@ class VideoDetectionTaskManager:
         db.session.commit()
         return camera
 
-    def _create_alarm_from_detection(
-        self, camera_id, cinema_id, alarm_code, frame_index, image_url, detections, task_id, cooldown_map
+    def _save_recognition_result(
+        self, task_id, camera_id, cinema_id, frame_index, image_url, detections, llm_analysis
     ):
-        camera = Camera.query.get(camera_id) if camera_id else None
-        if not camera:
-            camera = self._get_or_create_upload_camera(preferred_cinema_id=cinema_id)
-        if not camera:
-            return None
+        camera = self._resolve_camera(camera_id, cinema_id)
+        violation_codes = llm_analysis.get('violation_codes') or []
+        result = VideoRecognitionResult(
+            task_id=task_id,
+            camera_id=camera.id if camera else None,
+            cinema_id=(camera.cinema_id if camera else cinema_id),
+            frame_index=frame_index,
+            image_url=image_url,
+            person_count=len(detections or []),
+            violation=bool(llm_analysis.get('violation')),
+            violation_codes=','.join(violation_codes),
+            llm_summary=llm_analysis.get('summary', ''),
+            llm_reply=llm_analysis.get('raw_reply', ''),
+        )
+        db.session.add(result)
+        db.session.commit()
+        return result.id
 
-        alarm_type = AlarmType.query.filter_by(code=alarm_code).first()
+    def _resolve_camera(self, camera_id, cinema_id=None):
+        camera = Camera.query.get(camera_id) if camera_id else None
+        if camera:
+            return camera
+        return self._get_or_create_upload_camera(preferred_cinema_id=cinema_id)
+
+    @staticmethod
+    def _pick_alarm_type_code(violation_codes):
+        for code in ('photo', 'smoke', 'walk', 'crowd'):
+            if code in (violation_codes or []):
+                return code
+        return 'photo'
+
+    @staticmethod
+    def _pick_alarm_level_code(recent_count, threshold):
+        if recent_count >= threshold * 2:
+            return 'critical'
+        if recent_count >= threshold:
+            return 'high'
+        return 'medium'
+
+    def _create_threshold_alarm(self, task_id, camera_id, cinema_id, latest_sample, recent_count, window_seconds, threshold):
+        camera = self._resolve_camera(camera_id, cinema_id)
+        violation_codes = latest_sample.get('violation_codes') or []
+        llm_analysis = latest_sample.get('llm_analysis') or {}
+        alarm_type_code = self._pick_alarm_type_code(violation_codes)
+        alarm_type = AlarmType.query.filter_by(code=alarm_type_code).first()
+        if not alarm_type:
+            alarm_type = AlarmType.query.filter_by(code='photo').first()
         if not alarm_type:
             return None
 
-        source_camera_id = camera.id
-        cooldown_key = f"{source_camera_id}:{alarm_code}"
-        now_ts = time.time()
-        last_ts = cooldown_map.get(cooldown_key, 0)
-        if now_ts - last_ts < 60:
-            return None
+        level_code = self._pick_alarm_level_code(recent_count, max(1, int(threshold or 1)))
+        level = AlarmLevel.query.filter_by(code=level_code).first()
+        if not level:
+            level = AlarmLevel.query.filter_by(code='high').first()
 
-        max_confidence = max((d.get('confidence') or 0) for d in detections)
-        level = self._pick_level(max_confidence)
+        detections = latest_sample.get('detections') or []
+        detection_box = ''
+        confidence = 0.0
+        if detections:
+            detection_box = ','.join(map(str, detections[0].get('box') or []))
+            confidence = max(float(d.get('confidence') or 0.0) for d in detections)
+
+        location = ''
+        if camera:
+            cinema_name = camera.cinema.name if camera.cinema else ''
+            hall_name = camera.hall.name if camera.hall else ''
+            position = camera.position or ''
+            location = f'{cinema_name} - {hall_name} - {position}'.strip(' -')
+
+        llm_summary = llm_analysis.get('summary') or '未提供大模型结论'
+        frame_index = latest_sample.get('frame_index')
 
         alarm = Alarm(
             alarm_type_id=alarm_type.id,
-            camera_id=source_camera_id,
+            camera_id=camera.id,
             level_id=level.id if level else 1,
-            title=f'{alarm_type.name} - {camera.name}',
+            title=f'视频识别阈值告警 - {alarm_type.name}',
             description=(
-                f'上传视频检测命中：第{frame_index}帧检测到{alarm_type.name}，'
-                f'最大置信度 {max_confidence:.2%}'
+                f'在{window_seconds}秒内累计检测到{recent_count}次违规。'
+                f'最新命中帧：#{frame_index}。'
+                f'大模型结论：{llm_summary}'
             ),
-            location=f'{camera.cinema.name if camera.cinema else ""} - {camera.hall.name if camera.hall else ""} - {camera.position or ""}',
-            image_url=image_url,
-            confidence=max_confidence,
+            location=location,
+            image_url=latest_sample.get('image_url'),
+            detection_box=detection_box,
+            confidence=confidence,
             status=ALARM_STATUS_PENDING,
-            occurred_at=datetime.now()
+            occurred_at=datetime.now(),
         )
         db.session.add(alarm)
         db.session.commit()
@@ -377,12 +552,15 @@ class VideoDetectionTaskManager:
             action='created',
             from_status=None,
             to_status=ALARM_STATUS_PENDING,
-            note=f'视频检测任务自动创建告警 task={task_id} frame={frame_index}'
+            note=f'视频识别阈值触发自动告警 task_id={task_id}, recent_count={recent_count}, window={window_seconds}s'
         ))
         db.session.commit()
 
-        emit_alarm(alarm.to_dict(), target_roles=['admin', 'operator', 'manager'], target_cinema_id=camera.cinema_id)
-        cooldown_map[cooldown_key] = now_ts
+        emit_alarm(
+            alarm.to_dict(),
+            target_roles=['admin', 'operator', 'manager'],
+            target_cinema_id=camera.cinema_id
+        )
         return alarm.id
 
 

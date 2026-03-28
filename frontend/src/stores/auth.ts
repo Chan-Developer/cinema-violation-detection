@@ -28,15 +28,19 @@ export const useAuthStore = defineStore('auth', () => {
   http.interceptors.response.use(
     response => response,
     error => {
+      const status = error.response?.status
+      const rawMsg = String(error.response?.data?.msg || error.response?.data?.message || '').toLowerCase()
+      const isJwt422 = status === 422 && /(token|jwt|segment|signature|subject|claim)/.test(rawMsg)
+
       console.error('[API Error]', {
         method: error.config?.method,
         url: error.config?.url,
-        status: error.response?.status,
+        status,
         message: error.message,
         data: error.response?.data
       })
 
-      if (error.response?.status === 401) {
+      if (status === 401 || isJwt422) {
         logout()
         window.location.href = '/login'
       }

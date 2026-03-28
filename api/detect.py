@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from werkzeug.utils import secure_filename
-from models import db
+from models import db, VideoRecognitionResult
 from config import config
 from services.detection import DetectionWorker
 from services.video_detection import video_detection_manager
@@ -13,6 +13,7 @@ import uuid
 detect_bp = Blueprint('detect', __name__)
 
 ALLOWED_EXTENSIONS = config['development'].ALLOWED_IMAGE | config['development'].ALLOWED_VIDEO
+MAX_UPLOAD_SIZE = 200 * 1024 * 1024
 
 
 def allowed_file(filename):
@@ -30,6 +31,13 @@ def _upload_dir():
     path = config['development'].UPLOAD_FOLDER
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def _is_too_large(file_storage):
+    size = file_storage.content_length
+    if size is None:
+        size = request.content_length
+    return bool(size and size > MAX_UPLOAD_SIZE)
 
 
 @detect_bp.route('/detect', methods=['POST'])
@@ -82,7 +90,7 @@ def detect_image():
         if not allowed_file(file.filename):
             return jsonify({'success': False, 'message': '不支持的文件格式'}), 400
 
-        if file.content_length > 200 * 1024 * 1024:
+        if _is_too_large(file):
             return jsonify({'success': False, 'message': '文件大小超过200MB'}), 400
 
         # 保存文件
@@ -162,7 +170,7 @@ def detect_image():
 @detect_bp.route('/detect/video', methods=['POST'])
 @jwt_required()
 def detect_video_upload():
-    """上传视频并异步检测（每隔N帧检测一次）"""
+    """上传视频并异步识别（每隔N帧采样，YOLO检人后交由大模型判断）"""
     try:
         user_id = int(get_jwt_identity())
         claims = get_jwt()
@@ -179,10 +187,16 @@ def detect_video_upload():
         if is_image(file.filename):
             return jsonify({'success': False, 'message': '请上传视频文件'}), 400
 
+        if _is_too_large(file):
+            return jsonify({'success': False, 'message': '文件大小超过200MB'}), 400
+
         frame_interval = request.form.get('frame_interval', 90, type=int)
         camera_id = request.form.get('camera_id', type=int)
         cinema_id = request.form.get('cinema_id', type=int)
         detection_types = request.form.get('detection_types', '', type=str)
+        alarm_window_seconds = request.form.get('alarm_window_seconds', 60, type=int)
+        alarm_threshold = request.form.get('alarm_threshold', 3, type=int)
+        alarm_cooldown_seconds = request.form.get('alarm_cooldown_seconds', type=int)
 
         if claims.get('role') == 'manager' and claims.get('cinema_id'):
             cinema_id = claims.get('cinema_id')
@@ -199,13 +213,25 @@ def detect_video_upload():
             cinema_id=cinema_id,
             detection_types=detection_types,
             frame_interval=frame_interval,
-            created_by=user_id
+            created_by=user_id,
+            alarm_window_seconds=alarm_window_seconds,
+            alarm_threshold=alarm_threshold,
+            alarm_cooldown_seconds=alarm_cooldown_seconds
         )
 
         return jsonify({
             'success': True,
-            'message': '视频检测任务已创建',
-            'task_id': task_id
+            'message': '视频识别任务已创建',
+            'task_id': task_id,
+            'alarm_policy': {
+                'window_seconds': max(1, int(alarm_window_seconds or 60)),
+                'threshold': max(1, int(alarm_threshold or 3)),
+                'cooldown_seconds': (
+                    max(1, int(alarm_cooldown_seconds))
+                    if alarm_cooldown_seconds is not None
+                    else max(1, int(alarm_window_seconds or 60))
+                ),
+            }
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -219,13 +245,64 @@ def get_video_task(task_id):
     claims = get_jwt()
     task = video_detection_manager.get_task(task_id)
     if not task:
-        return jsonify({'success': False, 'message': '任务不存在'}), 404
+        records = VideoRecognitionResult.query.filter_by(task_id=task_id).order_by(
+            VideoRecognitionResult.frame_index.asc()
+        ).all()
+        if not records:
+            return jsonify({'success': False, 'message': '任务不存在'}), 404
+
+        violation_frames = sum(1 for r in records if r.violation)
+        task = {
+            'task_id': task_id,
+            'status': 'completed',
+            'message': '任务状态缓存已丢失，已从识别记录恢复',
+            'progress': 100,
+            'frame_interval': None,
+            'camera_id': records[0].camera_id,
+            'cinema_id': records[0].cinema_id,
+            'created_by': None,
+            'video_path': None,
+            'total_frames': 0,
+            'processed_frames': 0,
+            'sampled_frames': len(records),
+            'hit_samples': sum(1 for r in records if (r.person_count or 0) > 0),
+            'records_saved': len(records),
+            'violation_frames': violation_frames,
+            'samples': [],
+            'summary': f'已恢复{len(records)}条识别记录，违规帧{violation_frames}条。',
+            'created_at': records[0].created_at.isoformat() if records[0].created_at else None,
+            'updated_at': records[-1].created_at.isoformat() if records[-1].created_at else None,
+            'finished_at': records[-1].created_at.isoformat() if records[-1].created_at else None,
+        }
 
     created_by = task.get('created_by')
     if created_by and created_by != user_id and claims.get('role') != 'admin':
         return jsonify({'success': False, 'message': '无权查看该任务'}), 403
 
     return jsonify({'success': True, 'task': task})
+
+
+@detect_bp.route('/detect/video/tasks/<string:task_id>/results', methods=['GET'])
+@jwt_required()
+def get_video_task_results(task_id):
+    """查询视频识别结果（持久化）"""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    task = video_detection_manager.get_task(task_id)
+    if task:
+        created_by = task.get('created_by')
+        if created_by and created_by != user_id and claims.get('role') != 'admin':
+            return jsonify({'success': False, 'message': '无权查看该任务'}), 403
+
+    records = VideoRecognitionResult.query.filter_by(task_id=task_id).order_by(
+        VideoRecognitionResult.frame_index.asc()
+    ).all()
+    return jsonify({
+        'success': True,
+        'task_id': task_id,
+        'total': len(records),
+        'results': [r.to_dict() for r in records]
+    })
 
 
 @detect_bp.route('/detect/status/<int:camera_id>', methods=['GET'])

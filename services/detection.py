@@ -99,6 +99,7 @@ class DetectionWorker(threading.Thread):
         'smoke': 'smoke',          # 烟雾
         'crowd': 'crowd',          # 拥挤
         'phone': 'phone',          # 手机
+        'cell phone': 'phone',     # COCO 类别里的手机
     }
 
     def __init__(self, camera_id, detection_types):

@@ -4,6 +4,10 @@ export function getApiErrorMessage(error: unknown, fallback = '操作失败'): s
   if (axios.isAxiosError(error)) {
     const responseData = error.response?.data as any
 
+    if (responseData?.msg && typeof responseData.msg === 'string') {
+      return responseData.msg
+    }
+
     if (responseData?.message && typeof responseData.message === 'string') {
       return responseData.message
     }
