@@ -1,6 +1,7 @@
 from . import db
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+from utils.roles import SYSTEM_ROLE_META, is_system_role
 
 class Role(db.Model):
     """角色表"""
@@ -13,6 +14,17 @@ class Role(db.Model):
     
     # 关系
     users = db.relationship('User', back_populates='role', lazy='dynamic')
+
+    def to_dict(self):
+        meta = SYSTEM_ROLE_META.get(self.name, {})
+        return {
+            'id': self.id,
+            'name': self.name,
+            'label': meta.get('label', self.name),
+            'description': self.description,
+            'scope': meta.get('scope', 'custom'),
+            'is_system': is_system_role(self.name),
+        }
     
     @staticmethod
     def init_roles():

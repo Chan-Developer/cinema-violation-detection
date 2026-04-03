@@ -70,7 +70,7 @@
             <el-option v-for="r in roles" :key="r.id" :label="r.description" :value="r.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="影院" v-if="userForm.role_id === 2">
+        <el-form-item label="影院" v-if="selectedRoleName === ROLE_MANAGER">
           <el-select v-model="userForm.cinema_id" placeholder="选择影院" style="width: 100%">
             <el-option v-for="c in cinemas" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
@@ -88,10 +88,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { getApiErrorMessage } from '../utils/error'
+import { ROLE_MANAGER, roleLabel, roleTag } from '../constants/roles'
 
 const authStore = useAuthStore()
 
@@ -122,6 +123,10 @@ const formRules: FormRules = {
   role_id: [{ required: true, message: '请选择角色', trigger: 'change' }],
 }
 const pagination = reactive({ page: 1, total: 0 })
+const selectedRoleName = computed(() => {
+  const role = roles.value.find(r => r.id === userForm.role_id)
+  return role?.name || ''
+})
 
 const loadUsers = async () => {
   loading.value = true
@@ -146,11 +151,9 @@ const loadCinemas = async () => {
   } catch (e) { console.error(e) }
 }
 
-const getRoleName = (role: string) =>
-  ({ admin: '管理员', manager: '影院经理', operator: '监控员', maintenance: '运维' } as Record<string, string>)[role] || role
+const getRoleName = (role: string) => roleLabel(role)
 
-const getRoleTag = (role: string) =>
-  ({ admin: 'danger', manager: 'success', operator: 'warning', maintenance: 'info' } as Record<string, string>)[role] || 'info'
+const getRoleTag = (role: string) => roleTag(role)
 
 const openAdd = () => {
   editingUser.value = null

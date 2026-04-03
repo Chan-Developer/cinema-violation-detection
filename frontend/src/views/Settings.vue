@@ -143,16 +143,13 @@
 import { reactive, computed, ref, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { roleLabel, roleTag } from '../constants/roles'
 
 const authStore = useAuthStore()
 
 const user = computed(() => authStore.user)
-const roleName = computed(() =>
-  ({ admin: '管理员', manager: '影院经理', operator: '监控员', maintenance: '运维' } as Record<string, string>)[user.value?.role || ''] || user.value?.role || ''
-)
-const roleTagType = computed(() =>
-  ({ admin: 'danger', manager: 'success', operator: 'warning', maintenance: 'info' } as Record<string, string>)[user.value?.role || ''] || 'info'
-)
+const roleName = computed(() => roleLabel(user.value?.role))
+const roleTagType = computed(() => roleTag(user.value?.role))
 const userInitial = computed(() => (user.value?.real_name || user.value?.username || 'U').slice(0, 1).toUpperCase())
 const isMobile = ref(false)
 

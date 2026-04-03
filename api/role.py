@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, Role
+from utils.roles import SYSTEM_ROLE_ORDER, is_admin, is_system_role
 
 role_bp = Blueprint('role', __name__)
 
@@ -17,13 +18,22 @@ def get_current_user_info():
 def get_roles():
     """获取角色列表"""
     roles = Role.query.all()
+    roles_sorted = sorted(
+        roles,
+        key=lambda item: (
+            SYSTEM_ROLE_ORDER.index(item.name)
+            if item.name in SYSTEM_ROLE_ORDER
+            else len(SYSTEM_ROLE_ORDER),
+            item.id
+        )
+    )
     return jsonify({
         'success': True,
         'roles': [r.to_dict() if hasattr(r, 'to_dict') else {
             'id': r.id,
             'name': r.name,
             'description': r.description
-        } for r in roles]
+        } for r in roles_sorted]
     })
 
 
@@ -48,7 +58,7 @@ def get_role(role_id):
 def create_role():
     """创建角色"""
     _, claims = get_current_user_info()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -83,12 +93,15 @@ def create_role():
 def update_role(role_id):
     """更新角色"""
     _, claims = get_current_user_info()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     role = Role.query.get(role_id)
     if not role:
         return jsonify({'success': False, 'message': '角色不存在'}), 404
+
+    if is_system_role(role.name):
+        return jsonify({'success': False, 'message': '系统内置角色不允许修改'}), 400
 
     data = request.get_json(silent=True) or {}
 
@@ -119,12 +132,15 @@ def update_role(role_id):
 def delete_role(role_id):
     """删除角色"""
     _, claims = get_current_user_info()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     role = Role.query.get(role_id)
     if not role:
         return jsonify({'success': False, 'message': '角色不存在'}), 404
+
+    if is_system_role(role.name):
+        return jsonify({'success': False, 'message': '系统内置角色不允许删除'}), 400
 
     # 检查是否有用户使用该角色
     user_count = role.users.count() if hasattr(role, 'users') else 0

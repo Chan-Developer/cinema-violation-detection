@@ -1,6 +1,15 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
-from models import db, Camera, Cinema, Hall, CameraStatus
+from models import db, Camera, Cinema, CameraStatus
+from utils.roles import (
+    ROLE_ADMIN,
+    ROLE_MAINTENANCE,
+    ROLE_MANAGER,
+    has_any_role,
+    is_admin,
+    is_manager,
+    manager_cinema_id,
+)
 
 camera_bp = Blueprint('camera', __name__)
 
@@ -28,8 +37,9 @@ def get_cameras():
     query = Camera.query
 
     # 根据角色过滤
-    if claims.get('role') == 'manager' and claims.get('cinema_id'):
-        query = query.filter(Camera.cinema_id == claims.get('cinema_id'))
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id:
+        query = query.filter(Camera.cinema_id == scoped_cinema_id)
     elif cinema_id:
         query = query.filter(Camera.cinema_id == cinema_id)
 
@@ -57,9 +67,12 @@ def get_cameras():
 @jwt_required()
 def get_camera(camera_id):
     """获取摄像头详情"""
+    _, claims = get_current_user_info()
     camera = Camera.query.get(camera_id)
     if not camera:
         return jsonify({'success': False, 'message': '摄像头不存在'}), 404
+    if is_manager(claims) and manager_cinema_id(claims) != camera.cinema_id:
+        return jsonify({'success': False, 'message': '仅可访问所属影院摄像头'}), 403
     
     return jsonify({'success': True, 'camera': camera.to_dict(include_status=True)})
 
@@ -69,12 +82,14 @@ def get_camera(camera_id):
 def create_camera():
     """创建摄像头"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'manager', 'maintenance']:
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER, ROLE_MAINTENANCE):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     data = request.get_json(silent=True) or {}
     name = data.get('name')
     cinema_id = data.get('cinema_id')
+    if is_manager(claims):
+        cinema_id = manager_cinema_id(claims)
 
     if not name or not cinema_id:
         return jsonify({'success': False, 'message': '缺少必要参数'}), 400
@@ -114,18 +129,20 @@ def create_camera():
 def update_camera(camera_id):
     """更新摄像头"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'manager', 'maintenance']:
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER, ROLE_MAINTENANCE):
         return jsonify({'success': False, 'message': '权限不足'}), 403
     
     camera = Camera.query.get(camera_id)
     if not camera:
         return jsonify({'success': False, 'message': '摄像头不存在'}), 404
+    if is_manager(claims) and manager_cinema_id(claims) != camera.cinema_id:
+        return jsonify({'success': False, 'message': '仅可更新所属影院摄像头'}), 403
     
     data = request.get_json(silent=True) or {}
     
     if 'name' in data:
         camera.name = data['name']
-    if 'cinema_id' in data:
+    if 'cinema_id' in data and not is_manager(claims):
         camera.cinema_id = data['cinema_id']
     if 'hall_id' in data:
         camera.hall_id = data['hall_id']
@@ -166,7 +183,7 @@ def update_camera(camera_id):
 def delete_camera(camera_id):
     """删除摄像头"""
     _, claims = get_current_user_info()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     camera = Camera.query.get(camera_id)
@@ -189,9 +206,12 @@ def delete_camera(camera_id):
 @jwt_required()
 def get_camera_status(camera_id):
     """获取摄像头状态"""
+    _, claims = get_current_user_info()
     camera = Camera.query.get(camera_id)
     if not camera:
         return jsonify({'success': False, 'message': '摄像头不存在'}), 404
+    if is_manager(claims) and manager_cinema_id(claims) != camera.cinema_id:
+        return jsonify({'success': False, 'message': '仅可访问所属影院摄像头'}), 403
     
     # 获取最近的status记录
     latest = CameraStatus.query.filter_by(camera_id=camera_id).order_by(
@@ -218,7 +238,7 @@ def get_camera_status(camera_id):
 def update_camera_status(camera_id):
     """更新摄像头状态"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'maintenance']:
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MAINTENANCE):
         return jsonify({'success': False, 'message': '权限不足'}), 403
     
     camera = Camera.query.get(camera_id)

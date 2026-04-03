@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { ROLE_ADMIN, ROLE_MANAGER } from '../constants/roles'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -19,19 +20,9 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/Dashboard.vue')
       },
       {
-        path: '',
-        name: 'Dashboard',
-        component: () => import('../views/Dashboard.vue')
-      },
-      {
         path: 'monitor',
         name: 'Monitor',
         component: () => import('../views/Monitor.vue')
-      },
-      {
-        path: 'detection',
-        name: 'Detection',
-        component: () => import('../views/Detection.vue')
       },
       {
         path: 'alarms',
@@ -42,19 +33,19 @@ const routes: RouteRecordRaw[] = [
         path: 'cinemas',
         name: 'CinemaManage',
         component: () => import('../views/CinemaManage.vue'),
-        meta: { roles: ['admin', 'manager'] }
+        meta: { roles: [ROLE_ADMIN, ROLE_MANAGER] }
       },
       {
         path: 'users',
         name: 'UserManage',
         component: () => import('../views/UserManage.vue'),
-        meta: { roles: ['admin'] }
+        meta: { roles: [ROLE_ADMIN] }
       },
       {
         path: 'roles',
         name: 'RoleManage',
         component: () => import('../views/RoleManage.vue'),
-        meta: { roles: ['admin'] }
+        meta: { roles: [ROLE_ADMIN] }
       },
       {
         path: 'settings',

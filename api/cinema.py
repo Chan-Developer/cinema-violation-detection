@@ -1,6 +1,14 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, Cinema, Hall, Seat
+from utils.roles import (
+    ROLE_ADMIN,
+    ROLE_MANAGER,
+    has_any_role,
+    is_admin,
+    is_manager,
+    manager_cinema_id,
+)
 
 cinema_bp = Blueprint('cinema', __name__)
 
@@ -16,7 +24,7 @@ def get_current_user_info():
 @jwt_required()
 def get_cinemas():
     """获取影院列表"""
-    user_id, claims = get_current_user_info()
+    _, claims = get_current_user_info()
 
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
@@ -27,8 +35,9 @@ def get_cinemas():
     query = Cinema.query
 
     # 影院经理只能看到自己管理的影院
-    if claims.get('role') == 'manager' and claims.get('cinema_id'):
-        query = query.filter(Cinema.id == claims.get('cinema_id'))
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id:
+        query = query.filter(Cinema.id == scoped_cinema_id)
 
     if keyword:
         query = query.filter(Cinema.name.contains(keyword))
@@ -54,6 +63,11 @@ def get_cinemas():
 @jwt_required()
 def get_cinema(cinema_id):
     """获取影院详情"""
+    _, claims = get_current_user_info()
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id and scoped_cinema_id != cinema_id:
+        return jsonify({'success': False, 'message': '仅可访问所属影院'}), 403
+
     cinema = Cinema.query.get(cinema_id)
     if not cinema:
         return jsonify({'success': False, 'message': '影院不存在'}), 404
@@ -66,7 +80,7 @@ def get_cinema(cinema_id):
 def create_cinema():
     """创建影院"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'manager']:
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -96,8 +110,10 @@ def create_cinema():
 def update_cinema(cinema_id):
     """更新影院"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'manager']:
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER):
         return jsonify({'success': False, 'message': '权限不足'}), 403
+    if is_manager(claims) and manager_cinema_id(claims) != cinema_id:
+        return jsonify({'success': False, 'message': '仅可更新所属影院'}), 403
 
     cinema = Cinema.query.get(cinema_id)
     if not cinema:
@@ -130,7 +146,7 @@ def update_cinema(cinema_id):
 def delete_cinema(cinema_id):
     """删除影院"""
     _, claims = get_current_user_info()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     cinema = Cinema.query.get(cinema_id)
@@ -169,8 +185,10 @@ def get_halls(cinema_id):
 def create_hall(cinema_id):
     """创建影厅"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'manager']:
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER):
         return jsonify({'success': False, 'message': '权限不足'}), 403
+    if is_manager(claims) and manager_cinema_id(claims) != cinema_id:
+        return jsonify({'success': False, 'message': '仅可管理所属影院'}), 403
 
     cinema = Cinema.query.get(cinema_id)
     if not cinema:
@@ -228,12 +246,14 @@ def create_hall(cinema_id):
 def update_hall(hall_id):
     """更新影厅"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'manager']:
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     hall = Hall.query.get(hall_id)
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404
+    if is_manager(claims) and manager_cinema_id(claims) != hall.cinema_id:
+        return jsonify({'success': False, 'message': '仅可管理所属影院'}), 403
 
     data = request.get_json(silent=True) or {}
 
@@ -265,7 +285,7 @@ def update_hall(hall_id):
 def delete_hall(hall_id):
     """删除影厅"""
     _, claims = get_current_user_info()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     hall = Hall.query.get(hall_id)
@@ -302,12 +322,14 @@ def get_seats(hall_id):
 def create_seats(hall_id):
     """批量创建座位"""
     _, claims = get_current_user_info()
-    if claims.get('role') not in ['admin', 'manager']:
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     hall = Hall.query.get(hall_id)
     if not hall:
         return jsonify({'success': False, 'message': '影厅不存在'}), 404
+    if is_manager(claims) and manager_cinema_id(claims) != hall.cinema_id:
+        return jsonify({'success': False, 'message': '仅可管理所属影院'}), 403
     
     # 删除旧座位
     Seat.query.filter_by(hall_id=hall_id).delete()

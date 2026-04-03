@@ -1,10 +1,16 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
     create_access_token, create_refresh_token,
     jwt_required, get_jwt_identity, get_jwt
 )
 from models import db, User, Role
 from datetime import datetime
+from utils.roles import (
+    SYSTEM_ROLE_ORDER,
+    SYSTEM_ROLE_META,
+    is_admin,
+    manager_cinema_id,
+)
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -88,7 +94,7 @@ def get_current_user():
 def get_users():
     """获取用户列表"""
     _, claims = get_current_user_with_claims()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     page = request.args.get('page', 1, type=int)
@@ -128,7 +134,7 @@ def get_users():
 def create_user():
     """创建用户"""
     _, claims = get_current_user_with_claims()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -164,7 +170,7 @@ def create_user():
 def update_user(user_id):
     """更新用户"""
     current_user_id, claims = get_current_user_with_claims()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     user = User.query.get(user_id)
@@ -204,7 +210,7 @@ def update_user(user_id):
 def delete_user(user_id):
     """删除用户"""
     current_user_id, claims = get_current_user_with_claims()
-    if claims.get('role') != 'admin':
+    if not is_admin(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     user = User.query.get(user_id)
@@ -225,7 +231,35 @@ def delete_user(user_id):
 def get_roles():
     """获取角色列表"""
     roles = Role.query.all()
+    roles_sorted = sorted(
+        roles,
+        key=lambda item: (
+            SYSTEM_ROLE_ORDER.index(item.name)
+            if item.name in SYSTEM_ROLE_ORDER
+            else len(SYSTEM_ROLE_ORDER),
+            item.id
+        )
+    )
     return jsonify({
         'success': True,
-        'roles': [{'id': r.id, 'name': r.name, 'description': r.description} for r in roles]
+        'roles': [{'id': r.id, 'name': r.name, 'description': r.description} for r in roles_sorted]
+    })
+
+
+@auth_bp.route('/role-relations', methods=['GET'])
+@jwt_required()
+def get_role_relations():
+    """返回统一角色关系定义，供前后端对齐显示与权限解释"""
+    _, claims = get_current_user_with_claims()
+    return jsonify({
+        'success': True,
+        'current_role': claims.get('role'),
+        'current_cinema_scope': manager_cinema_id(claims),
+        'roles': [SYSTEM_ROLE_META[name] for name in SYSTEM_ROLE_ORDER if name in SYSTEM_ROLE_META],
+        'rules': {
+            'manager_scope': 'manager 角色始终绑定 token.cinema_id，不能跨影院操作',
+            'admin_scope': 'admin 可跨影院操作并管理用户与角色',
+            'operator_scope': 'operator 仅处理告警，不参与配置变更',
+            'maintenance_scope': 'maintenance 负责摄像头/视频流维护',
+        }
     })

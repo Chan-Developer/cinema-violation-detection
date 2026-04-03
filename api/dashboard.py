@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import (
     db, Cinema, Hall, Camera, Alarm, AlarmType, AlarmLevel, User,
@@ -6,6 +6,7 @@ from models import (
 )
 from datetime import datetime, timedelta
 from sqlalchemy import func
+from utils.roles import manager_cinema_id
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
@@ -146,8 +147,9 @@ def get_recent_alarms():
 
     query = Alarm.query.order_by(Alarm.occurred_at.desc()).limit(limit)
 
-    if claims.get('role') == 'manager' and claims.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id:
+        query = query.join(Camera).filter(Camera.cinema_id == scoped_cinema_id)
 
     alarms = query.all()
 
@@ -165,8 +167,9 @@ def get_cameras_status():
 
     query = Camera.query
 
-    if claims.get('role') == 'manager' and claims.get('cinema_id'):
-        query = query.filter(Camera.cinema_id == claims.get('cinema_id'))
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id:
+        query = query.filter(Camera.cinema_id == scoped_cinema_id)
     
     cameras = query.all()
     

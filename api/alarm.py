@@ -1,11 +1,16 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import (
-    db, Alarm, AlarmType, AlarmLevel, Camera, AlarmNotification, AlarmActionLog,
+    db, Alarm, AlarmType, AlarmLevel, Camera, AlarmActionLog,
     ALARM_STATUS_PENDING, ALARM_STATUS_CONFIRMED, ALARM_STATUS_PROCESSING,
     ALARM_STATUS_RESOLVED, ALARM_STATUS_IGNORED
 )
 from datetime import datetime, timedelta
+from utils.roles import (
+    is_admin,
+    is_operator,
+    manager_cinema_id,
+)
 
 alarm_bp = Blueprint('alarm', __name__)
 
@@ -51,9 +56,10 @@ def get_alarms():
     query = Alarm.query
 
     # 根据角色过滤
-    if claims.get('role') == 'manager' and claims.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
-    elif claims.get('role') == 'operator':
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id:
+        query = query.join(Camera).filter(Camera.cinema_id == scoped_cinema_id)
+    elif is_operator(claims):
         # 监控员可以看到所有报警
         pass
     elif cinema_id:
@@ -236,11 +242,12 @@ def get_alarm_statistics():
     query = Alarm.query.filter(Alarm.occurred_at >= start_date)
 
     # 根据角色过滤
-    if claims.get('role') == 'manager' and claims.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
-    elif claims.get('role') == 'operator':
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id:
+        query = query.join(Camera).filter(Camera.cinema_id == scoped_cinema_id)
+    elif is_operator(claims):
         pass
-    elif claims.get('role') not in ['admin']:
+    elif not is_admin(claims):
         cinema_id = request.args.get('cinema_id', type=int)
         if cinema_id:
             query = query.join(Camera).filter(Camera.cinema_id == cinema_id)
@@ -330,8 +337,9 @@ def get_pending_count():
         ALARM_STATUS_PROCESSING
     ]))
     
-    if claims.get('role') == 'manager' and claims.get('cinema_id'):
-        query = query.join(Camera).filter(Camera.cinema_id == claims.get('cinema_id'))
+    scoped_cinema_id = manager_cinema_id(claims)
+    if scoped_cinema_id:
+        query = query.join(Camera).filter(Camera.cinema_id == scoped_cinema_id)
     
     count = query.count()
     

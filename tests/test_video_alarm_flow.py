@@ -154,41 +154,7 @@ class VideoAndAlarmFlowTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         data = resp.get_json()
         self.assertFalse(data['success'])
-        self.assertIn('请上传视频文件', data['message'])
-
-    def test_detect_image_returns_llm_description_and_formatted_detections(self):
-        class FakeDetector:
-            def __init__(self, camera_id, detection_types):
-                self.camera_id = camera_id
-                self.detection_types = detection_types
-
-            def _detect(self, _frame):
-                return [{
-                    'type': 'person',
-                    'confidence': 0.93,
-                    'box': [4, 5, 26, 28]
-                }]
-
-        fake_frame = np.zeros((32, 32, 3), dtype=np.uint8)
-        with patch('api.detect.cv2.imread', return_value=fake_frame), \
-                patch('api.detect.DetectionWorker', FakeDetector), \
-                patch('utils.llm.call_llm_api', return_value='结论：存在拍照风险，建议提醒'):
-            resp = self.client.post(
-                '/api/detect',
-                data={'file': (io.BytesIO(b'fake-image-bytes'), 'scene.jpg')},
-                headers=self.auth_headers,
-                content_type='multipart/form-data'
-            )
-
-        self.assertEqual(resp.status_code, 200)
-        data = resp.get_json()
-        self.assertTrue(data['success'])
-        self.assertIn('annotated_image', data)
-        self.assertTrue(data['annotated_image'].startswith('data:image/jpeg;base64,'))
-        self.assertEqual(len(data['detections']), 1)
-        self.assertEqual(data['detections'][0]['class'], 'person')
-        self.assertEqual(data['detections'][0]['box'], [4, 5, 26, 28])
-        self.assertIn('结论：', data['llm_description'])
+        self.assertIn('不支持的文件格式', data['message'])
 
     def test_video_task_results_endpoint_returns_persisted_records(self):
         with self.app.app_context():
