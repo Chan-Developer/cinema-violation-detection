@@ -4,7 +4,6 @@ from models import db, Camera, Cinema, CameraStatus
 from utils.roles import (
     ROLE_ADMIN,
     ROLE_MAINTENANCE,
-    ROLE_MANAGER,
     has_any_role,
     is_admin,
     is_manager,
@@ -82,14 +81,12 @@ def get_camera(camera_id):
 def create_camera():
     """创建摄像头"""
     _, claims = get_current_user_info()
-    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER, ROLE_MAINTENANCE):
-        return jsonify({'success': False, 'message': '权限不足'}), 403
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MAINTENANCE):
+        return jsonify({'success': False, 'message': '仅系统管理员/运维可创建摄像头'}), 403
 
     data = request.get_json(silent=True) or {}
     name = data.get('name')
     cinema_id = data.get('cinema_id')
-    if is_manager(claims):
-        cinema_id = manager_cinema_id(claims)
 
     if not name or not cinema_id:
         return jsonify({'success': False, 'message': '缺少必要参数'}), 400
@@ -129,20 +126,18 @@ def create_camera():
 def update_camera(camera_id):
     """更新摄像头"""
     _, claims = get_current_user_info()
-    if not has_any_role(claims, ROLE_ADMIN, ROLE_MANAGER, ROLE_MAINTENANCE):
-        return jsonify({'success': False, 'message': '权限不足'}), 403
+    if not has_any_role(claims, ROLE_ADMIN, ROLE_MAINTENANCE):
+        return jsonify({'success': False, 'message': '仅系统管理员/运维可更新摄像头'}), 403
     
     camera = Camera.query.get(camera_id)
     if not camera:
         return jsonify({'success': False, 'message': '摄像头不存在'}), 404
-    if is_manager(claims) and manager_cinema_id(claims) != camera.cinema_id:
-        return jsonify({'success': False, 'message': '仅可更新所属影院摄像头'}), 403
     
     data = request.get_json(silent=True) or {}
     
     if 'name' in data:
         camera.name = data['name']
-    if 'cinema_id' in data and not is_manager(claims):
+    if 'cinema_id' in data:
         camera.cinema_id = data['cinema_id']
     if 'hall_id' in data:
         camera.hall_id = data['hall_id']

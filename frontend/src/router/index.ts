@@ -33,13 +33,13 @@ const routes: RouteRecordRaw[] = [
         path: 'cinemas',
         name: 'CinemaManage',
         component: () => import('../views/CinemaManage.vue'),
-        meta: { roles: [ROLE_ADMIN, ROLE_MANAGER] }
+        meta: { roles: [ROLE_ADMIN] }
       },
       {
         path: 'users',
         name: 'UserManage',
         component: () => import('../views/UserManage.vue'),
-        meta: { roles: [ROLE_ADMIN] }
+        meta: { roles: [ROLE_ADMIN, ROLE_MANAGER] }
       },
       {
         path: 'roles',

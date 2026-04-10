@@ -126,8 +126,8 @@ const menuItems = [
   { path: '/', label: '仪表盘', icon: 'DataAnalysis', roles: null },
   { path: '/monitor', label: '视频识别', icon: 'Monitor', roles: null },
   { path: '/alarms', label: '报警管理', icon: 'Bell', roles: null, badge: () => authStore.pendingAlarmCount },
-  { path: '/cinemas', label: '影院管理', icon: 'OfficeBuilding', roles: [ROLE_ADMIN, ROLE_MANAGER] },
-  { path: '/users', label: '用户管理', icon: 'User', roles: [ROLE_ADMIN] },
+  { path: '/cinemas', label: '影院管理', icon: 'OfficeBuilding', roles: [ROLE_ADMIN] },
+  { path: '/users', label: '用户管理', icon: 'User', roles: [ROLE_ADMIN, ROLE_MANAGER] },
   { path: '/roles', label: '角色管理', icon: 'Setting', roles: [ROLE_ADMIN] },
   { path: '/settings', label: '系统设置', icon: 'Setting', roles: null },
 ]

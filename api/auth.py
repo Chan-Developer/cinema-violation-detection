@@ -6,9 +6,14 @@ from flask_jwt_extended import (
 from models import db, User, Role
 from datetime import datetime
 from utils.roles import (
+    ROLE_ADMIN,
+    ROLE_MANAGER,
+    ROLE_OPERATOR,
+    ROLE_MAINTENANCE,
     SYSTEM_ROLE_ORDER,
     SYSTEM_ROLE_META,
     is_admin,
+    is_manager,
     manager_cinema_id,
 )
 
@@ -24,6 +29,26 @@ def get_current_user_with_claims():
     user_id = int(get_jwt_identity())
     claims = get_jwt()
     return user_id, claims
+
+
+def can_manage_users(claims):
+    return is_admin(claims) or is_manager(claims)
+
+
+def manager_scope_or_none(claims):
+    if not is_manager(claims):
+        return None
+    return manager_cinema_id(claims)
+
+
+def role_by_id_or_none(role_id):
+    if not role_id:
+        return None
+    return Role.query.get(role_id)
+
+
+def manager_can_assign_role(role_name):
+    return role_name in {ROLE_OPERATOR, ROLE_MAINTENANCE}
 
 
 @auth_bp.route('/login', methods=['POST'])
@@ -94,7 +119,7 @@ def get_current_user():
 def get_users():
     """获取用户列表"""
     _, claims = get_current_user_with_claims()
-    if not is_admin(claims):
+    if not can_manage_users(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     page = request.args.get('page', 1, type=int)
@@ -103,10 +128,14 @@ def get_users():
     cinema_id = request.args.get('cinema_id', type=int)
     keyword = request.args.get('keyword')
 
-    query = User.query
+    query = User.query.join(Role, User.role_id == Role.id)
+
+    scoped_cinema_id = manager_scope_or_none(claims)
+    if scoped_cinema_id is not None:
+        query = query.filter(User.cinema_id == scoped_cinema_id).filter(Role.name != ROLE_ADMIN)
 
     if role:
-        query = query.join(Role).filter(Role.name == role)
+        query = query.filter(Role.name == role)
     if cinema_id:
         query = query.filter(User.cinema_id == cinema_id)
     if keyword:
@@ -134,7 +163,7 @@ def get_users():
 def create_user():
     """创建用户"""
     _, claims = get_current_user_with_claims()
-    if not is_admin(claims):
+    if not can_manage_users(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -148,13 +177,24 @@ def create_user():
     if User.query.filter_by(username=username).first():
         return jsonify({'success': False, 'message': '用户名已存在'}), 400
 
+    role = role_by_id_or_none(role_id)
+    if not role:
+        return jsonify({'success': False, 'message': '角色不存在'}), 400
+
+    cinema_id = data.get('cinema_id')
+    scoped_cinema_id = manager_scope_or_none(claims)
+    if scoped_cinema_id is not None:
+        if not manager_can_assign_role(role.name):
+            return jsonify({'success': False, 'message': '影院经理仅可创建监控员/运维账号'}), 403
+        cinema_id = scoped_cinema_id
+
     new_user = User(
         username=username,
         real_name=data.get('real_name'),
         email=data.get('email'),
         phone=data.get('phone'),
         role_id=role_id,
-        cinema_id=data.get('cinema_id'),
+        cinema_id=cinema_id,
         status=1
     )
     new_user.set_password(password)
@@ -170,12 +210,21 @@ def create_user():
 def update_user(user_id):
     """更新用户"""
     current_user_id, claims = get_current_user_with_claims()
-    if not is_admin(claims):
+    if not can_manage_users(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     user = User.query.get(user_id)
     if not user:
         return jsonify({'success': False, 'message': '用户不存在'}), 404
+
+    if is_manager(claims):
+        scoped_cinema_id = manager_scope_or_none(claims)
+        if scoped_cinema_id is None:
+            return jsonify({'success': False, 'message': '影院经理未绑定影院，无法管理用户'}), 403
+        if user.cinema_id != scoped_cinema_id:
+            return jsonify({'success': False, 'message': '仅可管理所属影院用户'}), 403
+        if user.role and user.role.name in {ROLE_ADMIN, ROLE_MANAGER}:
+            return jsonify({'success': False, 'message': '影院经理不能修改管理员/经理账号'}), 403
 
     data = request.get_json(silent=True) or {}
 
@@ -192,9 +241,17 @@ def update_user(user_id):
     if 'phone' in data:
         user.phone = data['phone']
     if 'role_id' in data:
+        target_role = role_by_id_or_none(data['role_id'])
+        if not target_role:
+            return jsonify({'success': False, 'message': '角色不存在'}), 400
+        if is_manager(claims) and not manager_can_assign_role(target_role.name):
+            return jsonify({'success': False, 'message': '影院经理仅可分配监控员/运维角色'}), 403
         user.role_id = data['role_id']
     if 'cinema_id' in data:
-        user.cinema_id = data['cinema_id']
+        if is_manager(claims):
+            user.cinema_id = manager_scope_or_none(claims)
+        else:
+            user.cinema_id = data['cinema_id']
     if 'status' in data:
         user.status = data['status']
     if 'password' in data and data['password']:
@@ -210,7 +267,7 @@ def update_user(user_id):
 def delete_user(user_id):
     """删除用户"""
     current_user_id, claims = get_current_user_with_claims()
-    if not is_admin(claims):
+    if not can_manage_users(claims):
         return jsonify({'success': False, 'message': '权限不足'}), 403
 
     user = User.query.get(user_id)
@@ -219,6 +276,15 @@ def delete_user(user_id):
 
     if user.id == current_user_id:
         return jsonify({'success': False, 'message': '不能删除自己的账号'}), 400
+
+    if is_manager(claims):
+        scoped_cinema_id = manager_scope_or_none(claims)
+        if scoped_cinema_id is None:
+            return jsonify({'success': False, 'message': '影院经理未绑定影院，无法管理用户'}), 403
+        if user.cinema_id != scoped_cinema_id:
+            return jsonify({'success': False, 'message': '仅可删除所属影院用户'}), 403
+        if user.role and user.role.name in {ROLE_ADMIN, ROLE_MANAGER}:
+            return jsonify({'success': False, 'message': '影院经理不能删除管理员/经理账号'}), 403
 
     db.session.delete(user)
     db.session.commit()
@@ -240,6 +306,10 @@ def get_roles():
             item.id
         )
     )
+    _, claims = get_current_user_with_claims()
+    if is_manager(claims):
+        roles_sorted = [r for r in roles_sorted if r.name in {ROLE_OPERATOR, ROLE_MAINTENANCE}]
+
     return jsonify({
         'success': True,
         'roles': [{'id': r.id, 'name': r.name, 'description': r.description} for r in roles_sorted]
@@ -258,8 +328,8 @@ def get_role_relations():
         'roles': [SYSTEM_ROLE_META[name] for name in SYSTEM_ROLE_ORDER if name in SYSTEM_ROLE_META],
         'rules': {
             'manager_scope': 'manager 角色始终绑定 token.cinema_id，不能跨影院操作',
-            'admin_scope': 'admin 可跨影院操作并管理用户与角色',
+            'admin_scope': 'admin 可跨影院操作并管理用户、角色与影院',
             'operator_scope': 'operator 仅处理告警，不参与配置变更',
-            'maintenance_scope': 'maintenance 负责摄像头/视频流维护',
+            'maintenance_scope': 'maintenance 负责摄像头/视频流维护，并可处置告警',
         }
     })

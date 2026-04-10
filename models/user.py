@@ -30,16 +30,18 @@ class Role(db.Model):
     def init_roles():
         """初始化角色"""
         roles = [
-            {'name': 'admin', 'description': '系统管理员 - 全部权限'},
-            {'name': 'manager', 'description': '影院经理 - 管理所属影院'},
-            {'name': 'operator', 'description': '监控员 - 接收报警'},
-            {'name': 'maintenance', 'description': '运维工程师 - 系统维护'}
+            {'name': 'admin', 'description': '系统管理员 - 全局用户/角色/影院与设备管理'},
+            {'name': 'manager', 'description': '影院经理 - 仅管理所属影院用户与告警'},
+            {'name': 'operator', 'description': '监控员 - 监控与告警处置'},
+            {'name': 'maintenance', 'description': '运维工程师 - 设备运维与告警处置'}
         ]
         for role_data in roles:
             role = Role.query.filter_by(name=role_data['name']).first()
             if not role:
                 role = Role(**role_data)
                 db.session.add(role)
+            else:
+                role.description = role_data['description']
         db.session.commit()
 
 

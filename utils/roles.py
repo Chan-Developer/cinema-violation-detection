@@ -15,8 +15,8 @@ SYSTEM_ROLE_ORDER = [
 SYSTEM_ROLE_META = {
     ROLE_ADMIN: {
         'name': ROLE_ADMIN,
-        'label': '管理员',
-        'description': '系统管理员，拥有全局管理权限',
+        'label': '系统管理员',
+        'description': '全局权限，负责用户、角色、影院与设备策略',
         'scope': 'all',
         'can_manage_users': True,
         'can_manage_roles': True,
@@ -27,12 +27,12 @@ SYSTEM_ROLE_META = {
     ROLE_MANAGER: {
         'name': ROLE_MANAGER,
         'label': '影院经理',
-        'description': '仅管理所属影院及其影厅、摄像头和告警',
+        'description': '仅管理所属影院用户，可查看监控与处置告警',
         'scope': 'cinema',
-        'can_manage_users': False,
+        'can_manage_users': True,
         'can_manage_roles': False,
         'can_manage_cinemas': False,
-        'can_manage_cameras': True,
+        'can_manage_cameras': False,
         'can_process_alarms': True,
     },
     ROLE_OPERATOR: {
@@ -49,13 +49,13 @@ SYSTEM_ROLE_META = {
     ROLE_MAINTENANCE: {
         'name': ROLE_MAINTENANCE,
         'label': '运维',
-        'description': '负责摄像头与视频流运维，不参与角色和用户管理',
+        'description': '负责设备与系统运维，可查看监控并处置告警',
         'scope': 'all',
         'can_manage_users': False,
         'can_manage_roles': False,
         'can_manage_cinemas': False,
         'can_manage_cameras': True,
-        'can_process_alarms': False,
+        'can_process_alarms': True,
     },
 }
 
