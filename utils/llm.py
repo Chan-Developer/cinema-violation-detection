@@ -6,6 +6,16 @@ import requests
 from dotenv import dotenv_values
 
 
+def _get_ark_client():
+    try:
+        from volcenginesdkarkruntime import Ark
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing dependency: volcenginesdkarkruntime. Run `pip install -r requirements.txt`."
+        ) from exc
+    return Ark
+
+
 def _get_openai_client():
     try:
         from openai import OpenAI
@@ -21,7 +31,14 @@ def _require_env(name: str) -> str:
     env_value = (os.environ.get(name) or '').strip()
 
     # LLM 密钥优先读取项目 .env，避免进程里残留旧环境变量导致鉴权失败
-    if name in {'MODELSCOPE_API_KEY', 'OPENAI_API_KEY', 'DASHSCOPE_API_KEY', 'ZHIPU_API_KEY'}:
+    if name in {
+        'MODELSCOPE_API_KEY',
+        'OPENAI_API_KEY',
+        'DASHSCOPE_API_KEY',
+        'ZHIPU_API_KEY',
+        'ARK_API_KEY',
+        'DOUBAO_API_KEY',
+    }:
         value = file_value or env_value
     else:
         value = env_value or file_value
@@ -34,7 +51,14 @@ def _require_env(name: str) -> str:
 
 def get_llm_provider():
     """获取配置的LLM提供商"""
-    return os.environ.get('LLM_PROVIDER', 'modelscope')
+    return _optional_env('LLM_PROVIDER', 'modelscope')
+
+
+def _optional_env(name: str, default: str = '') -> str:
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    file_value = (dotenv_values(env_path).get(name) or '').strip()
+    env_value = (os.environ.get(name) or '').strip()
+    return env_value or file_value or default
 
 def encode_image(image_path):
     """将图片编码为base64"""
@@ -72,6 +96,70 @@ def build_prompt(detections):
 """
     return prompt
 
+
+def _build_vision_data_url(base64_image, mime_type='image/jpeg'):
+    return f"data:{mime_type};base64,{base64_image}"
+
+
+def _build_chat_messages(prompt, base64_image):
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": _build_vision_data_url(base64_image)
+                    }
+                }
+            ]
+        }
+    ]
+
+
+def _build_ark_responses_input(prompt, base64_image):
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": prompt
+                },
+                {
+                    "type": "input_image",
+                    "image_url": _build_vision_data_url(base64_image)
+                }
+            ]
+        }
+    ]
+
+
+def _extract_ark_response_text(response):
+    output = getattr(response, 'output', None) or []
+    texts = []
+
+    for item in output:
+        contents = getattr(item, 'content', None) or []
+        for content in contents:
+            if getattr(content, 'type', None) == 'output_text':
+                text = getattr(content, 'text', None)
+                if text:
+                    texts.append(text)
+
+    if texts:
+        return "\n".join(texts).strip()
+
+    output_text = getattr(response, 'output_text', None)
+    if output_text:
+        return output_text.strip()
+
+    raise RuntimeError(f"Ark 响应中未找到文本内容: {response}")
+
 def call_openai(detections, base64_image):
     """调用OpenAI API"""
     api_key = _require_env('OPENAI_API_KEY')
@@ -81,27 +169,35 @@ def call_openai(detections, base64_image):
 
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
-                    }
-                ]
-            }
-        ],
+        messages=_build_chat_messages(prompt, base64_image),
         max_tokens=200
     )
 
     return response.choices[0].message.content
+
+
+def call_doubao(detections, base64_image):
+    """调用火山引擎豆包 / 方舟 SDK Responses API"""
+    prompt = build_prompt(detections)
+    api_key = _optional_env('ARK_API_KEY') or _optional_env('DOUBAO_API_KEY')
+    if not api_key:
+        api_key = _require_env('ARK_API_KEY')
+
+    Ark = _get_ark_client()
+    client = Ark(
+        api_key=api_key,
+        base_url=_optional_env('ARK_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3'),
+    )
+
+    model = _optional_env('ARK_MODEL', 'doubao-seed-1-8-251228')
+
+    response = client.responses.create(
+        model=model,
+        input=_build_ark_responses_input(prompt, base64_image),
+        max_output_tokens=200
+    )
+
+    return _extract_ark_response_text(response)
 
 def call_zhipu(detections, base64_image):
     """调用智谱AI API"""
@@ -116,18 +212,7 @@ def call_zhipu(detections, base64_image):
 
     data = {
         "model": "glm-4v",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }
-        ]
+        "messages": _build_chat_messages(prompt, base64_image)
     }
 
     response = requests.post(url, headers=headers, json=data)
@@ -156,7 +241,7 @@ def call_qwen(detections, base64_image):
                         {
                             "text": prompt
                         },
-                        {"image": f"data:image/jpeg;base64,{base64_image}"}
+                        {"image": _build_vision_data_url(base64_image)}
                     ]
                 }
             ]
@@ -184,7 +269,7 @@ def call_modelscope(detections, base64_image):
             "role": "user",
             "content": [
                 {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+                {"type": "image_url", "image_url": {"url": _build_vision_data_url(base64_image)}},
             ],
         }],
         "stream": False,
@@ -319,6 +404,8 @@ def call_llm_api(detections, base64_image):
 
     if provider == 'openai':
         return call_openai(detections, base64_image)
+    elif provider in {'doubao', 'ark', 'volcengine'}:
+        return call_doubao(detections, base64_image)
     elif provider == 'zhipu':
         return call_zhipu(detections, base64_image)
     elif provider == 'qwen':

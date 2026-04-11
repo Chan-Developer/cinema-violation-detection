@@ -8,6 +8,7 @@ pillow>=10.0.0
 werkzeug>=2.3.0
 requests>=2.31.0
 openai>=1.0.0
+volcengine-python-sdk[ark]>=4.0.6
 cryptography>=42.0.0
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
