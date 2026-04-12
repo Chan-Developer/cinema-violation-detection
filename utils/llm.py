@@ -70,7 +70,7 @@ def encode_image_bytes(image_bytes):
     return base64.b64encode(image_bytes).decode('utf-8')
 
 def build_prompt(detections):
-    """构建统一提示词，要求简洁、无表情、Markdown格式"""
+    """构建影院违规分析提示词，覆盖更常见的影院不文明行为"""
     detection_text = "YOLO检测到的物体:\n"
     if detections:
         for d in detections:
@@ -78,7 +78,19 @@ def build_prompt(detections):
     else:
         detection_text += "- 未检测到明显物体\n"
 
-    prompt = f"""你是影院行为监管员。请观察图片（含检测框）并结合检测结果输出**简短**分析。
+    prompt = f"""你是影院行为监管员。请根据影院监控画面和检测结果，判断是否存在影响观影秩序的违规或不文明行为。
+
+重点关注这些影院常见问题：
+- 抽烟、疑似电子烟、明显烟雾
+- 拍照、录视频、举手机朝向银幕、手机屏幕长时间亮起影响他人
+- 频繁走动、站立、挡住银幕、在过道停留
+- 聚集、打闹、争执、大幅度动作影响他人观影
+- 其他明显不文明行为（如吃味道重的食物、躺卧占座、脚踩座椅等）
+
+判断原则：
+- 证据明显再判“有”，拿不准时判“无”并写“不确定/证据不足”
+- 不要因为单纯有人、单纯拿手机就直接判违规，要结合姿态、方向和场景
+- 只根据当前画面判断，不要编造画面外的信息
 
 【检测到的物体】
 {detection_text}
@@ -86,11 +98,14 @@ def build_prompt(detections):
 要求：
 1. 输出为 Markdown。
 2. 不要使用任何表情符号。
-3. 内容简洁，总字数不超过120字。
+3. 内容简洁，总字数不超过160字。
 4. 使用以下固定结构（每行一条）：
 # 影院行为监管员报告
 - 抽烟行为：有/无（简述）
 - 拍照/录视频：有/无（简述）
+- 手机亮屏影响观影：有/无（简述）
+- 走动/站立挡屏：有/无（简述）
+- 聚集/打闹：有/无（简述）
 - 其他违规：有/无（简述）
 结论：一句话建议
 """
@@ -194,7 +209,8 @@ def call_doubao(detections, base64_image):
     response = client.responses.create(
         model=model,
         input=_build_ark_responses_input(prompt, base64_image),
-        max_output_tokens=200
+        max_output_tokens=320,
+        thinking={"type": "disabled"},
     )
 
     return _extract_ark_response_text(response)

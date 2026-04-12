@@ -346,25 +346,42 @@ class VideoDetectionTaskManager:
             return {
                 'violation': False,
                 'violation_codes': [],
-                'flags': {'smoke': False, 'photo': False, 'other': False},
+                'flags': {'smoke': False, 'photo': False, 'walk': False, 'crowd': False, 'other': False},
                 'summary': '大模型未返回有效内容',
             }
 
-        def has_yes(label):
-            pattern = rf"{label}\s*[:：]\s*有"
-            return bool(re.search(pattern, text, flags=re.IGNORECASE))
+        def extract_line_value(label):
+            pattern = rf"{label}\s*[:：]\s*([^\n\r]+)"
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            return match.group(1).strip() if match else ''
 
-        smoke_yes = has_yes(r"抽烟行为")
-        photo_yes = has_yes(r"拍照/录视频")
-        other_yes = has_yes(r"其他违规")
+        def is_yes(value):
+            normalized = (value or '').strip().lower()
+            return normalized.startswith('有') or normalized.startswith('疑似有')
+
+        smoke_value = extract_line_value(r"抽烟行为")
+        photo_value = extract_line_value(r"拍照/录视频")
+        phone_value = extract_line_value(r"手机亮屏影响观影")
+        walk_value = extract_line_value(r"走动/站立挡屏")
+        crowd_value = extract_line_value(r"聚集/打闹")
+        other_value = extract_line_value(r"其他违规")
+
+        smoke_yes = is_yes(smoke_value)
+        photo_yes = is_yes(photo_value)
+        phone_yes = is_yes(phone_value)
+        walk_yes = is_yes(walk_value)
+        crowd_yes = is_yes(crowd_value)
+        other_yes = is_yes(other_value)
 
         violation_codes = []
         if smoke_yes:
             violation_codes.append('smoke')
-        if photo_yes:
+        if photo_yes or phone_yes:
             violation_codes.append('photo')
-        if other_yes:
+        if walk_yes or other_yes:
             violation_codes.append('walk')
+        if crowd_yes:
+            violation_codes.append('crowd')
 
         conclusion = ''
         conclusion_match = re.search(r"结论\s*[:：]\s*(.+)", text)
@@ -376,7 +393,9 @@ class VideoDetectionTaskManager:
             'violation_codes': violation_codes,
             'flags': {
                 'smoke': smoke_yes,
-                'photo': photo_yes,
+                'photo': (photo_yes or phone_yes),
+                'walk': (walk_yes or other_yes),
+                'crowd': crowd_yes,
                 'other': other_yes,
             },
             'summary': conclusion or text[:200],
