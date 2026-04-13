@@ -102,7 +102,7 @@ class DetectionWorker(threading.Thread):
         'cell phone': 'phone',     # COCO 类别里的手机
     }
 
-    def __init__(self, camera_id, detection_types):
+    def __init__(self, camera_id, detection_types, confidence_threshold=0.5):
         super().__init__(daemon=True)
         self.camera_id = camera_id
         self.detection_types = detection_types.split(',') if detection_types else []
@@ -114,7 +114,7 @@ class DetectionWorker(threading.Thread):
 
         # YOLO 检测配置
         self.detection_interval = 0.5  # 检测间隔(秒) - YOLO 会自动调节
-        self.confidence_threshold = 0.5
+        self.confidence_threshold = max(0.1, min(0.9, float(confidence_threshold or 0.5)))
         self.use_yolo = YOLO_AVAILABLE
 
         # 加载 YOLO 模型 (仅加载一次)

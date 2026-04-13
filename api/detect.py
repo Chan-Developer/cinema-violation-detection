@@ -32,6 +32,14 @@ def _is_too_large(file_storage):
     return bool(size and size > MAX_UPLOAD_SIZE)
 
 
+def _clamp_confidence_threshold(raw_value, default=0.35):
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        value = default
+    return max(0.1, min(0.9, value))
+
+
 @detect_bp.route('/detect/video', methods=['POST'])
 @jwt_required()
 def detect_video_upload():
@@ -59,6 +67,7 @@ def detect_video_upload():
         alarm_window_seconds = request.form.get('alarm_window_seconds', 60, type=int)
         alarm_threshold = request.form.get('alarm_threshold', 3, type=int)
         alarm_cooldown_seconds = request.form.get('alarm_cooldown_seconds', type=int)
+        confidence_threshold = _clamp_confidence_threshold(request.form.get('confidence_threshold'))
 
         cinema_id = apply_manager_scope(claims, cinema_id)
 
@@ -74,6 +83,7 @@ def detect_video_upload():
             cinema_id=cinema_id,
             detection_types=detection_types,
             frame_interval=frame_interval,
+            confidence_threshold=confidence_threshold,
             created_by=user_id,
             alarm_window_seconds=alarm_window_seconds,
             alarm_threshold=alarm_threshold,
@@ -84,6 +94,7 @@ def detect_video_upload():
             'success': True,
             'message': '视频识别任务已创建',
             'task_id': task_id,
+            'confidence_threshold': confidence_threshold,
             'alarm_policy': {
                 'window_seconds': max(1, int(alarm_window_seconds or 60)),
                 'threshold': max(1, int(alarm_threshold or 3)),

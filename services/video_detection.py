@@ -42,12 +42,14 @@ class VideoDetectionTaskManager:
         cinema_id=None,
         detection_types='',
         frame_interval=90,
+        confidence_threshold=0.35,
         created_by=None,
         alarm_window_seconds=60,
         alarm_threshold=3,
         alarm_cooldown_seconds=None
     ):
         frame_interval = max(1, int(frame_interval or 90))
+        confidence_threshold = max(0.1, min(0.9, float(confidence_threshold or 0.35)))
         alarm_window_seconds = max(1, int(alarm_window_seconds or 60))
         alarm_threshold = max(1, int(alarm_threshold or 3))
         if alarm_cooldown_seconds is None:
@@ -62,6 +64,7 @@ class VideoDetectionTaskManager:
             'message': '任务已创建',
             'progress': 0,
             'frame_interval': frame_interval,
+            'confidence_threshold': confidence_threshold,
             'camera_id': camera_id,
             'cinema_id': cinema_id,
             'created_by': created_by,
@@ -143,7 +146,11 @@ class VideoDetectionTaskManager:
                 self._update_task(task_id, total_frames=total_frames, fps=round(fps, 2))
 
                 # 新逻辑：YOLO 只做人检测，违规判定交给大模型
-                detector = DetectionWorker(camera_id=camera_id or 0, detection_types='person')
+                detector = DetectionWorker(
+                    camera_id=camera_id or 0,
+                    detection_types='person',
+                    confidence_threshold=task.get('confidence_threshold', 0.35)
+                )
 
                 while True:
                     ok, frame = cap.read()

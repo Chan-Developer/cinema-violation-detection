@@ -16,6 +16,10 @@
             <el-input-number v-model="frameInterval" :min="1" :max="300" :step="1" />
             <span class="hint">每 {{ frameInterval }} 帧检测一次</span>
           </el-form-item>
+          <el-form-item label="YOLO阈值">
+            <el-input-number v-model="confidenceThreshold" :min="0.1" :max="0.9" :step="0.05" :precision="2" />
+            <span class="hint">数值越低越容易检出人，但误检可能更多</span>
+          </el-form-item>
         </el-form>
         <div class="hint">当前逻辑：YOLO仅检测“人”，违规行为由大模型结合画面判定。</div>
       </div>
@@ -41,7 +45,7 @@
         <div class="webcam-header">
           <div class="title">本地摄像头</div>
           <el-tag :type="isRecording ? 'danger' : webcamStream ? 'success' : 'info'" round>
-            {{ isRecording ? '录制中' : webcamStream ? '已连接' : '未连接' }}
+            {{ isRecording ? '自动上传中' : webcamStream ? '已连接' : '未连接' }}
           </el-tag>
         </div>
 
@@ -54,16 +58,17 @@
           <el-button type="primary" @click="openWebcam" :disabled="webcamOpening || !!webcamStream">
             打开摄像头
           </el-button>
-          <el-button @click="closeWebcam" :disabled="!webcamStream || isRecording">
+          <el-button @click="closeWebcam" :disabled="!webcamStream">
             关闭摄像头
           </el-button>
-          <el-button type="warning" @click="startRecording" :disabled="!webcamStream || isRecording">
-            开始录制并上传
+          <el-button type="warning" @click="startRecording" :disabled="!webcamStream || autoUploadEnabled">
+            恢复自动上传
           </el-button>
-          <el-button type="danger" @click="stopRecording" :disabled="!isRecording">
-            停止录制并上传
+          <el-button type="danger" @click="stopRecording" :disabled="!webcamStream || !autoUploadEnabled">
+            暂停自动上传
           </el-button>
-          <span class="hint" v-if="isRecording">已录制 {{ recordingSeconds }} 秒</span>
+          <span class="hint" v-if="webcamStream">打开后每 20 秒自动上传一个片段</span>
+          <span class="hint" v-if="isRecording">当前片段已录制 {{ recordingSeconds }} 秒</span>
         </div>
       </div>
     </el-card>
@@ -154,16 +159,21 @@ import { useAuthStore } from '../stores/auth'
 const authStore = useAuthStore()
 
 const frameInterval = ref(90)
+const confidenceThreshold = ref(0.35)
 const tasks = ref<any[]>([])
 const pollTimers = new Map<string, number>()
 const webcamVideoRef = ref<HTMLVideoElement | null>(null)
 const webcamStream = ref<MediaStream | null>(null)
 const webcamOpening = ref(false)
 const mediaRecorder = ref<MediaRecorder | null>(null)
-const recordingChunks = ref<Blob[]>([])
 const isRecording = ref(false)
 const recordingSeconds = ref(0)
+const autoUploadEnabled = ref(false)
+const WEBCAM_UPLOAD_INTERVAL_MS = 20000
 let recordingTimer: number | null = null
+let segmentStopTimer: number | null = null
+let activeRecorderId = 0
+let pendingWebcamClose = false
 
 const apiOrigin = (import.meta.env.VITE_API_BASE || 'http://localhost:9500/api').replace(/\/api\/?$/, '')
 
@@ -190,10 +200,15 @@ const beforeUpload = (file: any) => {
   return true
 }
 
-const createTaskFromFile = async (file: File, sourceLabel = '上传视频') => {
+const createTaskFromFile = async (
+  file: File,
+  sourceLabel = '上传视频',
+  options: { silentSuccess?: boolean } = {}
+) => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('frame_interval', String(frameInterval.value || 90))
+  formData.append('confidence_threshold', String(confidenceThreshold.value || 0.35))
 
   const res = await authStore.api.post('/detect/video', formData, {
     timeout: 180000,
@@ -217,7 +232,9 @@ const createTaskFromFile = async (file: File, sourceLabel = '上传视频') => {
 
   tasks.value.unshift(task)
   startPolling(task.task_id)
-  ElMessage.success(`${sourceLabel}任务已创建，开始检测`)
+  if (!options.silentSuccess) {
+    ElMessage.success(`${sourceLabel}任务已创建，开始检测`)
+  }
   return res.data
 }
 
@@ -245,6 +262,9 @@ const openWebcam = async () => {
       webcamVideoRef.value.srcObject = stream
       await webcamVideoRef.value.play().catch(() => {})
     }
+    pendingWebcamClose = false
+    autoUploadEnabled.value = true
+    startRecordingCycle()
   } catch (e: any) {
     ElMessage.error(e?.message || '无法打开摄像头，请检查浏览器权限')
   } finally {
@@ -252,13 +272,29 @@ const openWebcam = async () => {
   }
 }
 
-const closeWebcam = (force = false) => {
-  if (isRecording.value && !force) return
+const finalizeWebcamClose = () => {
   webcamStream.value?.getTracks().forEach(track => track.stop())
   webcamStream.value = null
+  mediaRecorder.value = null
+  isRecording.value = false
+  recordingSeconds.value = 0
+  stopRecordingTimer()
+  clearSegmentStopTimer()
+  pendingWebcamClose = false
   if (webcamVideoRef.value) {
     webcamVideoRef.value.srcObject = null
   }
+}
+
+const closeWebcam = () => {
+  autoUploadEnabled.value = false
+  pendingWebcamClose = true
+  clearSegmentStopTimer()
+  if (mediaRecorder.value && mediaRecorder.value.state === 'recording') {
+    mediaRecorder.value.stop()
+    return
+  }
+  finalizeWebcamClose()
 }
 
 const stopRecordingTimer = () => {
@@ -268,15 +304,42 @@ const stopRecordingTimer = () => {
   }
 }
 
-const startRecording = () => {
+const clearSegmentStopTimer = () => {
+  if (segmentStopTimer) {
+    clearTimeout(segmentStopTimer)
+    segmentStopTimer = null
+  }
+}
+
+const scheduleSegmentStop = () => {
+  clearSegmentStopTimer()
+  segmentStopTimer = window.setTimeout(() => {
+    if (mediaRecorder.value && mediaRecorder.value.state === 'recording') {
+      mediaRecorder.value.stop()
+    }
+  }, WEBCAM_UPLOAD_INTERVAL_MS)
+}
+
+const uploadRecordedSegment = (blob: Blob) => {
+  const file = new File([blob], `webcam-${Date.now()}.webm`, { type: blob.type || 'video/webm' })
+  void createTaskFromFile(file, '本地摄像头', { silentSuccess: true }).catch((e: any) => {
+    ElMessage.error(e?.response?.data?.message || e?.message || '摄像头视频上传失败')
+  })
+}
+
+const startRecordingCycle = () => {
   if (!webcamStream.value) return
   if (typeof MediaRecorder === 'undefined') {
     ElMessage.error('当前浏览器不支持本地录制')
+    autoUploadEnabled.value = false
     return
   }
+  if (mediaRecorder.value && mediaRecorder.value.state === 'recording') return
+
   const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
   const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type)) || ''
-  recordingChunks.value = []
+  const recorderId = ++activeRecorderId
+  const chunks: Blob[] = []
 
   const recorder = mimeType
     ? new MediaRecorder(webcamStream.value, { mimeType })
@@ -285,40 +348,66 @@ const startRecording = () => {
 
   recorder.ondataavailable = (event: BlobEvent) => {
     if (event.data && event.data.size > 0) {
-      recordingChunks.value.push(event.data)
+      chunks.push(event.data)
     }
   }
 
   recorder.onstop = async () => {
-    isRecording.value = false
-    stopRecordingTimer()
+    const isActiveRecorder = activeRecorderId === recorderId
+    const shouldContinue = isActiveRecorder && autoUploadEnabled.value && !!webcamStream.value && !pendingWebcamClose
 
-    const blob = new Blob(recordingChunks.value, { type: recorder.mimeType || 'video/webm' })
-    recordingChunks.value = []
+    if (isActiveRecorder) {
+      isRecording.value = false
+      stopRecordingTimer()
+      clearSegmentStopTimer()
+      mediaRecorder.value = null
+      recordingSeconds.value = 0
+    }
 
-    if (!blob.size) {
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' })
+
+    if (blob.size) {
+      uploadRecordedSegment(blob)
+    } else if (shouldContinue) {
       ElMessage.error('未录制到有效视频，请重试')
+    }
+
+    if (shouldContinue) {
+      startRecordingCycle()
       return
     }
 
-    const file = new File([blob], `webcam-${Date.now()}.webm`, { type: blob.type || 'video/webm' })
-    try {
-      await createTaskFromFile(file, '本地摄像头')
-    } catch (e: any) {
-      ElMessage.error(e?.response?.data?.message || e?.message || '摄像头视频上传失败')
+    if (isActiveRecorder && pendingWebcamClose) {
+      finalizeWebcamClose()
     }
   }
 
+  mediaRecorder.value = recorder
   recorder.start(500)
   isRecording.value = true
   recordingSeconds.value = 0
+  stopRecordingTimer()
   recordingTimer = window.setInterval(() => {
     recordingSeconds.value += 1
   }, 1000)
+  scheduleSegmentStop()
+}
+
+const startRecording = () => {
+  if (!webcamStream.value) return
+  autoUploadEnabled.value = true
+  startRecordingCycle()
 }
 
 const stopRecording = () => {
-  if (!mediaRecorder.value || !isRecording.value) return
+  autoUploadEnabled.value = false
+  clearSegmentStopTimer()
+  pendingWebcamClose = false
+  if (!mediaRecorder.value || !isRecording.value) {
+    isRecording.value = false
+    stopRecordingTimer()
+    return
+  }
   mediaRecorder.value.stop()
 }
 
@@ -412,10 +501,14 @@ onUnmounted(() => {
   pollTimers.forEach((timer) => clearInterval(timer))
   pollTimers.clear()
   stopRecordingTimer()
+  clearSegmentStopTimer()
   if (isRecording.value && mediaRecorder.value) {
+    autoUploadEnabled.value = false
+    pendingWebcamClose = true
     mediaRecorder.value.stop()
+    return
   }
-  closeWebcam(true)
+  finalizeWebcamClose()
 })
 </script>
 
