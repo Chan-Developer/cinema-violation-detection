@@ -16,6 +16,10 @@
             <el-input-number v-model="frameInterval" :min="1" :max="300" :step="1" />
             <span class="hint">每 {{ frameInterval }} 帧检测一次</span>
           </el-form-item>
+          <el-form-item label="处理间隔">
+            <el-input-number v-model="webcamIntervalSeconds" :min="5" :max="300" :step="5" />
+            <span class="hint">打开摄像头后每 {{ webcamIntervalSeconds }} 秒自动处理一次</span>
+          </el-form-item>
           <el-form-item label="YOLO阈值">
             <el-input-number v-model="confidenceThreshold" :min="0.1" :max="0.9" :step="0.05" :precision="2" />
             <span class="hint">数值越低越容易检出人，但误检可能更多</span>
@@ -45,7 +49,7 @@
         <div class="webcam-header">
           <div class="title">本地摄像头</div>
           <el-tag :type="isRecording ? 'danger' : webcamStream ? 'success' : 'info'" round>
-            {{ isRecording ? '自动上传中' : webcamStream ? '已连接' : '未连接' }}
+            {{ isRecording ? '自动处理中' : webcamStream ? '已连接' : '未连接' }}
           </el-tag>
         </div>
 
@@ -61,13 +65,7 @@
           <el-button @click="closeWebcam" :disabled="!webcamStream">
             关闭摄像头
           </el-button>
-          <el-button type="warning" @click="startRecording" :disabled="!webcamStream || autoUploadEnabled">
-            恢复自动上传
-          </el-button>
-          <el-button type="danger" @click="stopRecording" :disabled="!webcamStream || !autoUploadEnabled">
-            暂停自动上传
-          </el-button>
-          <span class="hint" v-if="webcamStream">打开后每 20 秒自动上传一个片段</span>
+          <span class="hint" v-if="webcamStream">打开后会按设定间隔自动上传处理</span>
           <span class="hint" v-if="isRecording">当前片段已录制 {{ recordingSeconds }} 秒</span>
         </div>
       </div>
@@ -159,6 +157,7 @@ import { useAuthStore } from '../stores/auth'
 const authStore = useAuthStore()
 
 const frameInterval = ref(90)
+const webcamIntervalSeconds = ref(20)
 const confidenceThreshold = ref(0.35)
 const tasks = ref<any[]>([])
 const pollTimers = new Map<string, number>()
@@ -168,8 +167,6 @@ const webcamOpening = ref(false)
 const mediaRecorder = ref<MediaRecorder | null>(null)
 const isRecording = ref(false)
 const recordingSeconds = ref(0)
-const autoUploadEnabled = ref(false)
-const WEBCAM_UPLOAD_INTERVAL_MS = 20000
 let recordingTimer: number | null = null
 let segmentStopTimer: number | null = null
 let activeRecorderId = 0
@@ -263,7 +260,6 @@ const openWebcam = async () => {
       await webcamVideoRef.value.play().catch(() => {})
     }
     pendingWebcamClose = false
-    autoUploadEnabled.value = true
     startRecordingCycle()
   } catch (e: any) {
     ElMessage.error(e?.message || '无法打开摄像头，请检查浏览器权限')
@@ -287,7 +283,6 @@ const finalizeWebcamClose = () => {
 }
 
 const closeWebcam = () => {
-  autoUploadEnabled.value = false
   pendingWebcamClose = true
   clearSegmentStopTimer()
   if (mediaRecorder.value && mediaRecorder.value.state === 'recording') {
@@ -313,11 +308,12 @@ const clearSegmentStopTimer = () => {
 
 const scheduleSegmentStop = () => {
   clearSegmentStopTimer()
+  const intervalMs = Math.max(5, Number(webcamIntervalSeconds.value || 20)) * 1000
   segmentStopTimer = window.setTimeout(() => {
     if (mediaRecorder.value && mediaRecorder.value.state === 'recording') {
       mediaRecorder.value.stop()
     }
-  }, WEBCAM_UPLOAD_INTERVAL_MS)
+  }, intervalMs)
 }
 
 const uploadRecordedSegment = (blob: Blob) => {
@@ -331,7 +327,7 @@ const startRecordingCycle = () => {
   if (!webcamStream.value) return
   if (typeof MediaRecorder === 'undefined') {
     ElMessage.error('当前浏览器不支持本地录制')
-    autoUploadEnabled.value = false
+    pendingWebcamClose = true
     return
   }
   if (mediaRecorder.value && mediaRecorder.value.state === 'recording') return
@@ -354,7 +350,7 @@ const startRecordingCycle = () => {
 
   recorder.onstop = async () => {
     const isActiveRecorder = activeRecorderId === recorderId
-    const shouldContinue = isActiveRecorder && autoUploadEnabled.value && !!webcamStream.value && !pendingWebcamClose
+    const shouldContinue = isActiveRecorder && !!webcamStream.value && !pendingWebcamClose
 
     if (isActiveRecorder) {
       isRecording.value = false
@@ -391,24 +387,6 @@ const startRecordingCycle = () => {
     recordingSeconds.value += 1
   }, 1000)
   scheduleSegmentStop()
-}
-
-const startRecording = () => {
-  if (!webcamStream.value) return
-  autoUploadEnabled.value = true
-  startRecordingCycle()
-}
-
-const stopRecording = () => {
-  autoUploadEnabled.value = false
-  clearSegmentStopTimer()
-  pendingWebcamClose = false
-  if (!mediaRecorder.value || !isRecording.value) {
-    isRecording.value = false
-    stopRecordingTimer()
-    return
-  }
-  mediaRecorder.value.stop()
 }
 
 const updateTask = (taskId: string, taskData: any) => {
@@ -503,7 +481,6 @@ onUnmounted(() => {
   stopRecordingTimer()
   clearSegmentStopTimer()
   if (isRecording.value && mediaRecorder.value) {
-    autoUploadEnabled.value = false
     pendingWebcamClose = true
     mediaRecorder.value.stop()
     return
