@@ -14,6 +14,7 @@ from .alarm import (
 )
 from .video import VideoStream
 from .video_recognition import VideoRecognitionResult
+from .evidence import MobileEvidence
 
 __all__ = [
     'db', 'User', 'Role', 'Cinema', 'Hall', 'Seat', 
@@ -22,5 +23,5 @@ __all__ = [
     'ALARM_STATUS_PENDING', 'ALARM_STATUS_CONFIRMED',
     'ALARM_STATUS_PROCESSING', 'ALARM_STATUS_RESOLVED',
     'ALARM_STATUS_IGNORED', 'ALARM_STATUS_TEXT',
-    'VideoStream', 'VideoRecognitionResult'
+    'VideoStream', 'VideoRecognitionResult', 'MobileEvidence'
 ]

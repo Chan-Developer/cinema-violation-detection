@@ -152,6 +152,7 @@
 import { ref, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled } from '@element-plus/icons-vue'
+import { getApiOrigin } from '../utils/apiBase'
 import { useAuthStore } from '../stores/auth'
 
 const authStore = useAuthStore()
@@ -172,7 +173,7 @@ let segmentStopTimer: number | null = null
 let activeRecorderId = 0
 let pendingWebcamClose = false
 
-const apiOrigin = (import.meta.env.VITE_API_BASE || 'http://localhost:9500/api').replace(/\/api\/?$/, '')
+const apiOrigin = getApiOrigin()
 
 const normalizeMediaUrl = (url: string) => {
   if (!url) return url

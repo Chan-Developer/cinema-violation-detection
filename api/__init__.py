@@ -10,6 +10,7 @@ def register_blueprints(app):
     from .dashboard import dashboard_bp
     from .detect import detect_bp
     from .role import role_bp
+    from .evidence import evidence_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(cinema_bp, url_prefix='/api/cinemas')
@@ -19,3 +20,4 @@ def register_blueprints(app):
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(detect_bp, url_prefix='/api')
     app.register_blueprint(role_bp, url_prefix='/api/roles')
+    app.register_blueprint(evidence_bp, url_prefix='/api/evidence')

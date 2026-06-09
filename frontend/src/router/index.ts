@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
-import { ROLE_ADMIN, ROLE_MANAGER } from '../constants/roles'
+import { ROLE_ADMIN, ROLE_MANAGER, ROLE_MAINTENANCE } from '../constants/roles'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -30,10 +30,21 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/AlarmList.vue')
       },
       {
+        path: 'evidences',
+        name: 'EvidenceList',
+        component: () => import('../views/EvidenceList.vue')
+      },
+      {
         path: 'cinemas',
         name: 'CinemaManage',
         component: () => import('../views/CinemaManage.vue'),
         meta: { roles: [ROLE_ADMIN] }
+      },
+      {
+        path: 'cameras',
+        name: 'CameraManage',
+        component: () => import('../views/CameraManage.vue'),
+        meta: { roles: [ROLE_ADMIN, ROLE_MAINTENANCE] }
       },
       {
         path: 'users',
@@ -53,6 +64,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/Settings.vue')
       }
     ]
+  },
+  {
+    path: '/mobile/evidence',
+    name: 'MobileEvidence',
+    component: () => import('../views/MobileEvidence.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 
@@ -66,9 +83,10 @@ router.beforeEach((to, _from, next) => {
   const userStr = localStorage.getItem('user')
 
   if (to.meta.requiresAuth && !token) {
-    next('/login')
+    next({ path: '/login', query: { redirect: to.fullPath } })
   } else if (to.path === '/login' && token) {
-    next('/')
+    const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/'
+    next(redirect)
   } else if (to.meta.roles && userStr) {
     const user = JSON.parse(userStr)
     if (!(to.meta.roles as string[]).includes(user.role)) {

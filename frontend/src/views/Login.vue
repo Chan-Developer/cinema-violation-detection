@@ -67,11 +67,12 @@
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const formRef = ref<FormInstance>()
@@ -104,7 +105,8 @@ const handleLogin = async () => {
     try {
       await authStore.login(form.username, form.password)
       ElMessage.success('登录成功')
-      router.push('/')
+      const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
+      router.push(redirect)
     } catch (e: any) {
       ElMessage.error(e.message || '登录失败，请检查用户名和密码')
     } finally {

@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
 import { ref, computed } from 'vue'
+import { getApiBase } from '../utils/apiBase'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:9500/api'
+const API_BASE = getApiBase()
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(localStorage.getItem('token') || '')
